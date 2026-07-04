@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Derived index — disposable, rebuildable from Markdown via `reindex`.
+brain.db
+brain.db-*
+
+.DS_Store

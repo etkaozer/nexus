@@ -1,0 +1,38 @@
+{
+  "name": "nexus-mcp",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local stdio MCP server bridging Claude Desktop and an Obsidian vault — a second brain. Markdown is the source of truth; the index is a disposable projection.",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "nexus-mcp": "./dist/main.js"
+  },
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsc -p tsconfig.json --watch",
+    "start": "node ./dist/main.js",
+    "test": "npm run build && node --test \"dist/**/*.test.js\""
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.20.0",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "better-sqlite3": "^12.11.1",
+    "gray-matter": "^4.0.3",
+    "js-yaml": "^5.2.1",
+    "simple-git": "^3.36.0",
+    "sqlite-vec": "^0.1.9",
+    "ulid": "^3.0.2",
+    "zod": "^4.4.3"
+  }
+}
