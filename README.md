@@ -12,6 +12,21 @@ The practical payoff: the reasoning model is a swappable client, and the embeddi
 
 ---
 
+## Compatibility
+
+Nexus has **no model-specific code** — it exposes a standard set of [MCP](https://modelcontextprotocol.io) tools, so the reasoning model is genuinely swappable. The requirement is on the *host*, not the model:
+
+> **Any MCP host that can launch a local stdio server** (a `command` + `args` + `env`), driving **any tool-calling model.**
+
+An LLM doesn't connect to an MCP server itself — the host application does, then exposes the tools to whatever model it runs. So the model behind the host (Claude, GPT, Gemini, Llama, …) is irrelevant to Nexus. Known-good stdio-MCP hosts include **Claude Desktop**, **Claude Code**, **Cursor**, **Windsurf**, **VS Code** (Copilot), **Cline**, **Zed**, the **Gemini CLI**, **ChatGPT Desktop**, and the **OpenAI Agents SDK**.
+
+Two caveats:
+
+- **Transport is stdio only.** A host that accepts *only* a remote MCP server (an `https://…` URL) can't launch Nexus directly — wrap it with a stdio↔HTTP bridge (e.g. `mcp-remote`) or add a `StreamableHTTPServerTransport` (the MCP SDK supports it; it's a small, localized change). Local hosts need nothing extra.
+- **Curation quality tracks the model.** By design Nexus does the mechanics and the model does the judgment (duplicate vs. supersession vs. new idea). Any tool-calling model *works*; a more capable one curates better.
+
+---
+
 ## Design principles
 
 These are the decisions that make Nexus what it is. Each was chosen deliberately; most are enforced by the type system and the tests.
