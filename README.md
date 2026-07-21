@@ -177,7 +177,7 @@ Unchanged chunks are left untouched; running `reindex` twice does nothing the se
 ### 1 · Clone, install, build
 
 ```bash
-git clone <repo> nexus && cd nexus
+git clone https://github.com/etkaozer/nexus.git nexus && cd nexus
 npm install      # fetches/compiles native deps (better-sqlite3, onnxruntime)
 npm run build    # compiles TypeScript → dist/
 ```
