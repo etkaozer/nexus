@@ -22,9 +22,9 @@ import type { EmbeddingProvider, EmbeddingKind } from "../interfaces/embedding-p
 const MODEL = "Xenova/multilingual-e5-small";
 
 // uids of the four seeded notes
-const A = "note-mexc";
+const A = "note-acme";
 const B = "note-bread";
-const C = "note-visioncall";
+const C = "note-notes";
 const D = "note-git";
 
 let dir: string;
@@ -78,12 +78,12 @@ before(async () => {
 
   await indexNote(
     cm,
-    makeNote(A, "MEXC Rate Limits", "reference", "trading-bot", [
+    makeNote(A, "AcmeAPI Rate Limits", "reference", "acme-api", [
       "## Limits",
-      "MEXC caps public REST endpoints and returns HTTP 429 once you exceed the quota.",
+      "AcmeAPI caps public REST endpoints and returns HTTP 429 once you exceed the quota.",
       "",
       "## Backoff",
-      "When throttled by MEXC, wait and retry using exponential backoff.",
+      "When throttled by AcmeAPI, wait and retry using exponential backoff.",
     ].join("\n")),
   );
   await indexNote(
@@ -95,7 +95,7 @@ before(async () => {
   );
   await indexNote(
     cm,
-    makeNote(C, "VisionCall Scheduling", "project-note", "visioncall", [
+    makeNote(C, "Notes App Scheduling", "project-note", "notes-app", [
       "## Flow",
       "Users pick an available slot and the app books a video call for them.",
     ].join("\n")),
@@ -121,24 +121,24 @@ after(async () => {
 });
 
 test("vector search finds the semantically related note even when words differ", async () => {
-  // No "MEXC", no "429", no "rate limit" — purely semantic.
-  const hits = await index.vectorSearch("how do cryptocurrency exchanges throttle API requests", { k: 4 });
+  // No "AcmeAPI", no "429", no "rate limit" — purely semantic.
+  const hits = await index.vectorSearch("how do web APIs throttle client requests", { k: 4 });
   assert.ok(hits.length > 0, "returns hits");
-  assert.equal(hits[0]?.note_uid, A, "top vector hit is the MEXC/limits note");
+  assert.equal(hits[0]?.note_uid, A, "top vector hit is the AcmeAPI/limits note");
 });
 
-test("lexical search for MEXC hits exactly (and only) the note that contains it", async () => {
-  const hits = await index.lexicalSearch("MEXC", { k: 10 });
+test("lexical search for AcmeAPI hits exactly (and only) the note that contains it", async () => {
+  const hits = await index.lexicalSearch("AcmeAPI", { k: 10 });
   const notes = new Set(hits.map((h) => h.note_uid));
-  assert.equal(hits[0]?.note_uid, A, "top lexical hit is the MEXC note");
-  assert.deepEqual([...notes], [A], "no other note matches the rare token MEXC");
+  assert.equal(hits[0]?.note_uid, A, "top lexical hit is the AcmeAPI note");
+  assert.deepEqual([...notes], [A], "no other note matches the rare token AcmeAPI");
 });
 
 test("hybrid fuses both arms and rolls up to note level (no duplicate notes)", async () => {
-  const hits = await retriever.search("MEXC rate limits", { k: 10 });
+  const hits = await retriever.search("AcmeAPI rate limits", { k: 10 });
   const uids = hits.map((h) => h.uid);
   assert.equal(new Set(uids).size, uids.length, "each note appears at most once");
-  assert.equal(hits[0]?.uid, A, "the MEXC note ranks first");
+  assert.equal(hits[0]?.uid, A, "the AcmeAPI note ranks first");
   // A has two matching chunks but must appear as a single SearchHit
   assert.equal(uids.filter((u) => u === A).length, 1, "the multi-chunk note is a single hit");
   assert.ok(hits[0]?.snippet.length > 0, "hit carries a snippet");
@@ -191,7 +191,7 @@ test("anchor text (<!-- cid -->) never reaches the embedder", async (t) => {
   let n = 0;
   const cm = new MarkdownChunkManager({ mintSlug: () => `cid${++n}` });
   const { body, chunks } = cm.chunk(
-    makeNote("Z", "Anchor demo", "reference", undefined, "## Setup\nInstall it.\n\n## Notes\nMEXC 429 here."),
+    makeNote("Z", "Anchor demo", "reference", undefined, "## Setup\nInstall it.\n\n## Notes\nAcmeAPI 429 here."),
   );
 
   await idx.putNoteMeta({
@@ -211,5 +211,5 @@ test("anchor text (<!-- cid -->) never reaches the embedder", async (t) => {
     fake.passages.every((p) => !p.includes("<!-- cid")),
     "no anchor text reached the embedder",
   );
-  assert.ok(fake.passages.some((p) => p.includes("MEXC 429 here.")), "real content did reach the embedder");
+  assert.ok(fake.passages.some((p) => p.includes("AcmeAPI 429 here.")), "real content did reach the embedder");
 });

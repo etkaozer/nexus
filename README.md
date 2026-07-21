@@ -53,7 +53,7 @@ Each chunk gets a stable id `<note-uid>::<slug>#<ordinal>`. The slug is an opaqu
 ```markdown
 ## Rate limits
 <!-- cid:a1b2 -->
-MEXC returns HTTP 429 when throttled.
+AcmeAPI returns HTTP 429 when throttled.
 ```
 
 On every subsequent pass the slug is *read* from that anchor, never recomputed from the heading text. So renaming a heading re-embeds its text (the content changed) but keeps the same chunk id — no orphaned or duplicated chunks. Two identical headings each carry their own anchor, so their ids can never collide.
@@ -117,7 +117,7 @@ Every note carries this frontmatter (identity is `uid`, never the filename — s
 ```yaml
 uid:            # stable ULID — the real identity
 type:           # decision | principle | project-note | idea | reference | inbox
-project:        # optional slug, e.g. "trading-bot"
+project:        # optional slug, e.g. "acme-api"
 status:         # active | archived | superseded
 source:         # claude | chatgpt | gemini | repo | manual
 verified:       # false = captured as-is, true = human-curated
@@ -132,7 +132,7 @@ tags:           # optional []
 
 ## How it works under the hood
 
-**Hybrid retrieval.** A query runs two ways at once: cosine KNN over e5 vectors (`sqlite-vec`) for meaning, and BM25 (`FTS5`) for exact/rare tokens (`MEXC`, `SessionDO`, `HTTP 429`) that embeddings tend to blur. The two ranked lists are fused with **Reciprocal Rank Fusion** (`1/(k+rank)`, k=60), then **rolled up to note level** — a note that matched on several chunks appears once, at its best score. Fusion and roll-up happen in the `HybridRetriever` (core layer), never inside the index.
+**Hybrid retrieval.** A query runs two ways at once: cosine KNN over e5 vectors (`sqlite-vec`) for meaning, and BM25 (`FTS5`) for exact/rare tokens (`AcmeAPI`, `SessionStore`, `HTTP 429`) that embeddings tend to blur. The two ranked lists are fused with **Reciprocal Rank Fusion** (`1/(k+rank)`, k=60), then **rolled up to note level** — a note that matched on several chunks appears once, at its best score. Fusion and roll-up happen in the `HybridRetriever` (core layer), never inside the index.
 
 **Semantic chunking.** The body is split on the **shallowest heading level actually present** — a note whose sections are `#` splits on `#`, one whose sections are `##` splits on `##`. Content before the first heading becomes a `__preamble` chunk. Headings deeper than the split level are content, not boundaries. A section over the embedder's token budget (~450 for e5) is sub-split on the next-deeper level, then a fixed-size fallback. Chunk `content_hash` is computed over anchor-stripped text, so injecting a `<!-- cid -->` anchor is semantically inert and never triggers a spurious re-embed.
 
@@ -149,29 +149,61 @@ Unchanged chunks are left untouched; running `reindex` twice does nothing the se
 
 ---
 
-## Setup & first run
+## Installation
 
-Requires Node ≥ 20.
+### Prerequisites
+
+- **Node ≥ 20** — check with `node --version`.
+- **A C/C++ toolchain**, *only* if `npm install` can't use prebuilt binaries for the native modules (`better-sqlite3`, `onnxruntime-node`). Most platforms get prebuilds and need nothing extra; if a source build is triggered, install: macOS → `xcode-select --install`; Debian/Ubuntu → `sudo apt install build-essential python3`; Windows → Visual Studio's "Desktop development with C++" workload.
+- **~150 MB free disk** for the embedding model and index (fetched/built once, then reused).
+- **Claude Desktop** (or any MCP client) to use it interactively — optional if you only run the CLI.
+- **An Obsidian vault** — or any folder of Markdown files, or even an empty folder Nexus will create and manage for you.
+
+### 1 · Clone, install, build
 
 ```bash
 git clone <repo> nexus && cd nexus
-npm install
-npm run build
-npm test          # 26 tests, incl. real local-embedding integration tests
+npm install      # fetches/compiles native deps (better-sqlite3, onnxruntime)
+npm run build    # compiles TypeScript → dist/
 ```
 
-**Bootstrap an existing vault** (do this before wiring up Claude, so the model downloads and your notes get uids):
+`dist/` is git-ignored, so `npm run build` is required after every clone (and after pulling changes).
+
+### 2 · Run the tests (recommended)
 
 ```bash
-# back up first — this makes one-time edits (uids + anchors) to your notes
+npm test         # 26 tests
+```
+
+The integration tests exercise the **real** local embedding model, so the *first* `npm test` needs network access and a few minutes while `multilingual-e5-small` (~110 MB) downloads to `~/.cache/nexus/models`. Every run after that is offline and fast. All 26 should pass.
+
+### 3 · Point Nexus at a vault and bootstrap it
+
+A "vault" is just a directory of `.md` files. Bootstrapping does three one-time things to it: mints a stable `uid` in each note's frontmatter, injects invisible `<!-- cid -->` chunk anchors, and builds the search index.
+
+```bash
+# BACK UP FIRST — bootstrap rewrites every note once (adds uid + anchors).
 cp -R "/path/to/YourVault" "/path/to/YourVault-backup-$(date +%Y%m%d)"
 
+# Build the index and prepare the notes. Downloads the model on first run.
 NEXUS_VAULT="/path/to/YourVault" node ./dist/main.js reindex
 ```
 
-The first run downloads `multilingual-e5-small` (~110 MB, ~3 min) into `~/.cache/nexus/models`, then works fully offline. The index is written to `~/.cache/nexus/brain.db` (override with `NEXUS_DB`).
+What this does and where things go:
 
-**Register with Claude Desktop** — add to `~/Library/Application Support/Claude/claude_desktop_config.json` (use an absolute `node` path; Claude Desktop doesn't inherit your shell PATH):
+- The index is written **outside** the vault, to `~/.cache/nexus/brain.db` (override with `NEXUS_DB`), so your vault's git history stays Markdown-only.
+- Nexus writes a `.gitignore` into the vault so the derived index, `.obsidian/`, and `.trash/` can never be committed.
+- `reindex` is **idempotent** — safe to run any time; running it twice does nothing the second time.
+- Starting fresh? Point `NEXUS_VAULT` at an empty (or not-yet-existing) folder; Nexus creates it and manages notes there through the tools.
+
+### 4 · Register with Claude Desktop
+
+Claude Desktop launches the server for you over stdio. Add Nexus to its MCP config file:
+
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+Use an **absolute path to `node`** (find it with `which node` on macOS/Linux, `where node` on Windows) and an absolute path to `dist/main.js` — Claude Desktop does **not** inherit your shell's `PATH`.
 
 ```json
 {
@@ -185,7 +217,60 @@ The first run downloads `multilingual-e5-small` (~110 MB, ~3 min) into `~/.cache
 }
 ```
 
-Fully quit and reopen Claude Desktop. On startup the server **pre-warms the model in the background**, so the first search doesn't block on the download.
+Replace the three placeholder paths, then **fully quit and reopen** Claude Desktop (closing the window isn't enough). On startup Nexus pre-warms the model in the background, so your first search doesn't block on the download.
+
+### 5 · Verify it works
+
+In Claude Desktop, open the tools (🔨) menu — you should see the six `nexus` tools. Ask something like *"search my notes for rate limiting"* and Claude will call the `search` tool. If the tools don't appear, see [Troubleshooting](#troubleshooting).
+
+---
+
+## Usage
+
+Once registered, you just talk to Claude normally — it decides when to call the tools. The everyday loop is **capture → recall → curate**, with an occasional **reindex** after you edit in Obsidian.
+
+| You say something like… | Claude calls | Effect |
+|---|---|---|
+| "Save this as a decision in project `acme-api`: …" | `upsert` | Creates a note (mints a uid). |
+| "What did I decide about rate limiting?" | `search` → `read` | Finds candidates, reads the best one. |
+| "This replaces my old note `01J…`." | `upsert … supersedes` | Writes the new note, archives + cross-links the old. |
+| "Link this to my AcmeAPI note." | `link` | Adds an authored `[[wikilink]]`. |
+| "Archive that note." | `archive` | Sets `status: archived`, keeps the file. |
+| "I edited some notes in Obsidian — resync." | `reindex` | Rebuilds the index from Markdown. |
+
+You never call tools by hand; you describe intent and Claude picks the tool. The [6 tools table](#the-6-tools) above is the full surface.
+
+### Editing in Obsidian
+
+Markdown is the source of truth, so edit notes directly in Obsidian whenever you like. Afterwards, bring the index up to date — either ask Claude to *"reindex"* (it calls the `reindex` tool) or run it from the shell:
+
+```bash
+NEXUS_VAULT="/path/to/YourVault" node ./dist/main.js reindex
+```
+
+**Write-guard:** if you changed a note in Obsidian and then ask Claude to overwrite it *before* reindexing, the write is refused with a clear message rather than clobbering your edit. Run `reindex`, then retry.
+
+### CLI reference
+
+```bash
+# One-shot reindex / bootstrap, then exit (safe to re-run).
+NEXUS_VAULT=<vault> node ./dist/main.js reindex
+
+# Run the MCP server in the foreground (normally Claude Desktop does this for you).
+NEXUS_VAULT=<vault> node ./dist/main.js
+```
+
+| Env var | Purpose | Default |
+|---|---|---|
+| `NEXUS_VAULT` | Path to your vault (**required**). | — |
+| `NEXUS_DB` | Where the index file lives. | `~/.cache/nexus/brain.db` |
+
+### Troubleshooting
+
+- **`npm install` fails compiling `better-sqlite3` / `onnxruntime-node`** — install a C/C++ toolchain (see [Prerequisites](#prerequisites)), then `rm -rf node_modules && npm install`.
+- **First search seems to hang** — the ~110 MB model is still downloading on first use; watch the server's stderr. It's a one-time cost, then fully offline.
+- **"Refusing to overwrite … modified on disk"** — you edited that note in Obsidian; run `reindex` and retry.
+- **The `nexus` tools don't appear in Claude Desktop** — confirm the config JSON is valid, both paths are absolute (`node` **and** `dist/main.js`), `dist/` exists (`npm run build`), and that you *fully quit* and reopened the app.
 
 ---
 
@@ -222,4 +307,4 @@ Fully quit and reopen Claude Desktop. On startup the server **pre-warms the mode
 
 ## License
 
-Not yet chosen — treat as all-rights-reserved until a license is added. Pick one before publishing.
+[MIT](LICENSE) © 2026 etkaozer. Do what you like with it — just keep the copyright notice.

@@ -42,7 +42,7 @@ export function createServer(engine: Engine): McpServer {
       description:
         "Find knowledge by meaning OR exact term. Hybrid mode (default) fuses semantic vector " +
         "search with exact lexical search, so both conceptual questions and rare proper nouns " +
-        "(MEXC, SessionDO, HTTP 429) hit. Returns note-level results (each matching note once, at " +
+        "(AcmeAPI, SessionStore, HTTP 429) hit. Returns note-level results (each matching note once, at " +
         "its best score), not raw chunks. Filter by type or project when you know them.",
       inputSchema: {
         query: z.string().min(1).describe("A concept, question, or exact term to look for."),
@@ -103,7 +103,7 @@ export function createServer(engine: Engine): McpServer {
         uid: z.string().optional().describe("Omit to create; provide to overwrite that note."),
         title: z.string().min(1).describe("Display title (also the Obsidian filename)."),
         type: NOTE_TYPE.describe("decision | principle | project-note | idea | reference | inbox."),
-        project: z.string().optional().describe("Optional project slug, e.g. trading-bot."),
+        project: z.string().optional().describe("Optional project slug, e.g. acme-api."),
         body: z.string().describe("Markdown body (no frontmatter)."),
         source: NOTE_SOURCE.describe("Where this came from: claude | chatgpt | gemini | repo | manual."),
         supersedes: z.string().optional().describe("uid of a note this one replaces (it gets archived)."),

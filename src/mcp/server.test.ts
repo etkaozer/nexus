@@ -94,10 +94,10 @@ test("all 6 tools work end-to-end over the MCP boundary", async (t) => {
     await client.callTool({
       name: "upsert",
       arguments: {
-        title: "MEXC Notes",
+        title: "AcmeAPI Notes",
         type: "reference",
         source: "manual",
-        body: "## Limits\nMEXC returns HTTP 429 for SessionDO when throttled.",
+        body: "## Limits\nAcmeAPI returns HTTP 429 for SessionStore when throttled.",
       },
     }),
   );
@@ -106,7 +106,7 @@ test("all 6 tools work end-to-end over the MCP boundary", async (t) => {
   assert.ok(uid1);
 
   // search finds it (exact rare token via lexical arm)
-  const hits = jsonOf(await client.callTool({ name: "search", arguments: { query: "MEXC" } }));
+  const hits = jsonOf(await client.callTool({ name: "search", arguments: { query: "AcmeAPI" } }));
   assert.ok(Array.isArray(hits) && hits.some((h: { uid: string }) => h.uid === uid1), "search finds the note");
   assert.equal(new Set(hits.map((h: { uid: string }) => h.uid)).size, hits.length, "note-level (no dup notes)");
 
@@ -120,7 +120,7 @@ test("all 6 tools work end-to-end over the MCP boundary", async (t) => {
   const uid2: string = jsonOf(
     await client.callTool({
       name: "upsert",
-      arguments: { title: "Trading Bot", type: "project-note", source: "manual", body: "## Plan\nUse the exchange." },
+      arguments: { title: "Notes App", type: "project-note", source: "manual", body: "## Plan\nUse the service." },
     }),
   ).uid;
   const linked = jsonOf(
@@ -142,10 +142,10 @@ test("all 6 tools work end-to-end over the MCP boundary", async (t) => {
     await client.callTool({
       name: "upsert",
       arguments: {
-        title: "MEXC Notes v2",
+        title: "AcmeAPI Notes v2",
         type: "reference",
         source: "manual",
-        body: "## Limits\nUpdated MEXC limits.",
+        body: "## Limits\nUpdated AcmeAPI limits.",
         supersedes: uid1,
       },
     }),

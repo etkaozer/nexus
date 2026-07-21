@@ -29,19 +29,19 @@ async function main(): Promise<void> {
   const uid = newUid();
 
   const note: Note = {
-    title: "MEXC API Rate Limits",
+    title: "AcmeAPI Rate Limits",
     frontmatter: {
       uid,
       type: "reference",
-      project: "trading-bot",
+      project: "acme-api",
       status: "active",
       source: "manual",
       verified: false,
       created: now,
       updated: now,
-      tags: ["mexc", "api"],
+      tags: ["acme-api", "api"],
     },
-    body: "## Summary\nMEXC caps public REST endpoints; back off on HTTP 429.\n",
+    body: "## Summary\nAcmeAPI caps public REST endpoints; back off on HTTP 429.\n",
   };
 
   console.log("write + commit:");
@@ -64,7 +64,7 @@ async function main(): Promise<void> {
   assert(back !== null, "read(uid) returns the note");
   assert(back.frontmatter.uid === uid, "uid preserved");
   assert(typeof back.frontmatter.created === "string", "created stayed a string (no Date coercion)");
-  assert(back.frontmatter.project === "trading-bot", "project preserved");
+  assert(back.frontmatter.project === "acme-api", "project preserved");
   assert(back.content_hash === stored.content_hash, "on-disk hash matches the written hash");
 
   // 4. title collision (different uid, same title) → distinct, uid-suffixed filename

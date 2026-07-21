@@ -30,7 +30,7 @@ export interface Frontmatter {
   /** Stable ULID/UUID — the REAL identity of the note. Never the filename. */
   uid: string;
   type: NoteType;
-  /** Optional project slug, e.g. "trading-bot", "visioncall". */
+  /** Optional project slug, e.g. "acme-api", "notes-app". */
   project?: string;
   status: NoteStatus;
   source: NoteSource;
@@ -132,7 +132,7 @@ export interface SearchOptions {
   project?: string;
   /** Number of hits to return. */
   k?: number;
-  /** hybrid (default) fuses vector + lexical so rare proper nouns (MEXC, SessionDO) still hit. */
+  /** hybrid (default) fuses vector + lexical so rare proper nouns (AcmeAPI, SessionStore) still hit. */
   mode?: SearchMode;
 }
 

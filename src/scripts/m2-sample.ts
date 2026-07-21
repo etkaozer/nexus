@@ -23,11 +23,11 @@ const note: Note = {
   body: [
     "A quick capture before any section — this is the preamble.",
     "",
-    "# Trading Bot",
-    "Use MEXC for spot; back off on HTTP 429 rate limits.",
+    "# Acme API",
+    "Use AcmeAPI for lookups; back off on HTTP 429 rate limits.",
     "",
-    "# VisionCall",
-    "Ship the call-scheduling flow first.",
+    "# Notes App",
+    "Ship the note-scheduling flow first.",
     "",
   ].join("\n"),
 };
