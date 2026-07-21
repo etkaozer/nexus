@@ -103,7 +103,7 @@ export function createServer(engine: Engine): McpServer {
         uid: z.string().optional().describe("Omit to create; provide to overwrite that note."),
         title: z.string().min(1).describe("Display title (also the Obsidian filename)."),
         type: NOTE_TYPE.describe("decision | principle | project-note | idea | reference | inbox."),
-        project: z.string().optional().describe("Optional project slug, e.g. acme-api."),
+        project: z.string().optional().describe("Optional project slug, e.g. trading-bot."),
         body: z.string().describe("Markdown body (no frontmatter)."),
         source: NOTE_SOURCE.describe("Where this came from: claude | chatgpt | gemini | repo | manual."),
         supersedes: z.string().optional().describe("uid of a note this one replaces (it gets archived)."),

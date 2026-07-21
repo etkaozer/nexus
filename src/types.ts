@@ -30,7 +30,7 @@ export interface Frontmatter {
   /** Stable ULID/UUID — the REAL identity of the note. Never the filename. */
   uid: string;
   type: NoteType;
-  /** Optional project slug, e.g. "acme-api", "notes-app". */
+  /** Optional project slug, e.g. "trading-bot", "notes-app". */
   project?: string;
   status: NoteStatus;
   source: NoteSource;

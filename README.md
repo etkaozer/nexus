@@ -1,6 +1,40 @@
 # Nexus
 
-A local-first "second brain" that lives in your Obsidian vault. Nexus is an [MCP](https://modelcontextprotocol.io) server that sits between an LLM (Claude today) and your Markdown notes, and gives it a small, deterministic set of tools to search, read, and curate knowledge.
+LLM chats are great at reasoning but bad at remembering. Context dies when a chat ends, gets compacted away in long sessions, and doesn't follow you when you switch models. Nexus gives any MCP-compatible setup a durable memory that lives in your own Markdown files instead of inside a single conversation.
+
+Nexus is an [MCP](https://modelcontextprotocol.io) server that sits between your LLM host and your Markdown notes, exposing a small, deterministic set of tools to search, read, and curate knowledge. The point is simple: your knowledge shouldn't disappear because you switched models or closed a chat.
+
+## Example — a minute of real use
+
+Capturing a decision mid-project, as you make it:
+
+> **You:** Save this as a decision in `trading-bot`: going spot-only for the MVP, no leverage. Keeps the risk envelope simple and the kill-switch logic trivial — revisit once paper-trading is stable.
+>
+> **Claude** → `upsert` → *new note created (`type: decision`, `project: trading-bot`).*
+
+Tracking roadmap progress across a long build session:
+
+> **You:** Mark the "circuit breaker" milestone complete — Claude Code shipped it and the tests pass.
+>
+> **Claude** → `search` → `upsert` → *finds the roadmap note, marks that milestone done.*
+
+Three weeks later, coming back cold:
+
+> **You:** I'm back on the trading bot. Where did I leave off, and why did I go spot-only?
+>
+> **Claude** → `search` → `read` → *"You were on the news-integration milestone; circuit breaker and paper-trading are done. You went spot-only for the MVP to keep the risk envelope simple — here's the decision note and what it links to."*
+
+No re-explaining, no scrolling back through old chats. The knowledge was in your Markdown, not trapped in a closed conversation.
+
+## Quick start
+
+```bash
+git clone https://github.com/etkaozer/nexus.git nexus && cd nexus
+npm install && npm run build
+NEXUS_VAULT="/path/to/YourVault" node ./dist/main.js reindex   # back up your vault first
+```
+
+Then add Nexus to your MCP host's config (absolute paths — see [Installation](#installation) for details), restart it, and you're set. Full setup, prerequisites, and troubleshooting are in [Installation](#installation) below.
 
 ## The core idea
 
@@ -8,7 +42,11 @@ Your Markdown files are the single source of truth. Nexus is a **stateless intel
 
 Everything Nexus derives — embeddings, the vector index, the lexical index, the backlink graph — is a **projection** that can be rebuilt from the Markdown at any time with zero information loss. Nothing important lives only in the database.
 
-The practical payoff: the reasoning model is a swappable client, and the embedding model is a swappable implementation detail. You can change Claude for something else tomorrow, or swap `multilingual-e5-small` for `bge-m3`, without touching a single note. Your knowledge outlives the tools that read it.
+The practical payoff: the reasoning model is a swappable client, and the embedding model is a swappable implementation detail. You can move to a different reasoning model tomorrow, or swap `multilingual-e5-small` for `bge-m3`, without touching a single note. Your knowledge outlives the tools that read it.
+
+## What Nexus is — and isn't
+
+Nexus isn't a RAG pipeline with notes bolted on. Retrieval is one component; the point is a durable knowledge base that evolves over time and stays independent of any single LLM, embedding model, or database. Search exists to *retrieve* knowledge — the rest of Nexus exists to *preserve, organize, version, and evolve* it.
 
 ---
 
@@ -18,7 +56,7 @@ Nexus has **no model-specific code** — it exposes a standard set of [MCP](http
 
 > **Any MCP host that can launch a local stdio server** (a `command` + `args` + `env`), driving **any tool-calling model.**
 
-An LLM doesn't connect to an MCP server itself — the host application does, then exposes the tools to whatever model it runs. So the model behind the host (Claude, GPT, Gemini, Llama, …) is irrelevant to Nexus. Known-good stdio-MCP hosts include **Claude Desktop**, **Claude Code**, **Cursor**, **Windsurf**, **VS Code** (Copilot), **Cline**, **Zed**, the **Gemini CLI**, **ChatGPT Desktop**, and the **OpenAI Agents SDK**.
+An LLM doesn't connect to an MCP server itself — the host application does, then exposes the tools to whatever model it runs. So the model behind the host (Claude, GPT, Gemini, Llama, …) is irrelevant to Nexus. It works with Claude Desktop, Claude Code, Cursor, VS Code (Copilot), Cline, Zed, the Gemini CLI, and other stdio-capable MCP hosts.
 
 Two caveats:
 
@@ -123,6 +161,8 @@ The surface is exactly these six — no more.
 | `link` | Add an authored `[[wikilink]]` in a `## Links` section (idempotent). | `from_uid`, `to_uid`, `relation?` |
 | `reindex` | Rebuild the derived index from Markdown. Idempotent, hash-diff based. Run after editing in Obsidian. | `uid?` |
 
+`read` returns `related_auto` computed live from the index at call time; it's empty for a note with no indexed neighbours yet (a single-note vault, or before the first `reindex`).
+
 The **caller** chooses a note's `type` and `source`; the engine never infers them. Errors that need a human decision (a write-guard conflict, a duplicate uid) come back as clean, actionable tool errors — not stack traces.
 
 ### The note model
@@ -132,7 +172,7 @@ Every note carries this frontmatter (identity is `uid`, never the filename — s
 ```yaml
 uid:            # stable ULID — the real identity
 type:           # decision | principle | project-note | idea | reference | inbox
-project:        # optional slug, e.g. "acme-api"
+project:        # optional slug, e.g. "trading-bot"
 status:         # active | archived | superseded
 source:         # claude | chatgpt | gemini | repo | manual
 verified:       # false = captured as-is, true = human-curated
@@ -246,7 +286,7 @@ Once registered, you just talk to Claude normally — it decides when to call th
 
 | You say something like… | Claude calls | Effect |
 |---|---|---|
-| "Save this as a decision in project `acme-api`: …" | `upsert` | Creates a note (mints a uid). |
+| "Save this as a decision in project `trading-bot`: …" | `upsert` | Creates a note (mints a uid). |
 | "What did I decide about rate limiting?" | `search` → `read` | Finds candidates, reads the best one. |
 | "This replaces my old note `01J…`." | `upsert … supersedes` | Writes the new note, archives + cross-links the old. |
 | "Link this to my AcmeAPI note." | `link` | Adds an authored `[[wikilink]]`. |

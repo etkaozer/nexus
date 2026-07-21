@@ -33,13 +33,13 @@ async function main(): Promise<void> {
     frontmatter: {
       uid,
       type: "reference",
-      project: "acme-api",
+      project: "trading-bot",
       status: "active",
       source: "manual",
       verified: false,
       created: now,
       updated: now,
-      tags: ["acme-api", "api"],
+      tags: ["trading-bot", "api"],
     },
     body: "## Summary\nAcmeAPI caps public REST endpoints; back off on HTTP 429.\n",
   };
@@ -64,7 +64,7 @@ async function main(): Promise<void> {
   assert(back !== null, "read(uid) returns the note");
   assert(back.frontmatter.uid === uid, "uid preserved");
   assert(typeof back.frontmatter.created === "string", "created stayed a string (no Date coercion)");
-  assert(back.frontmatter.project === "acme-api", "project preserved");
+  assert(back.frontmatter.project === "trading-bot", "project preserved");
   assert(back.content_hash === stored.content_hash, "on-disk hash matches the written hash");
 
   // 4. title collision (different uid, same title) → distinct, uid-suffixed filename

@@ -78,7 +78,7 @@ before(async () => {
 
   await indexNote(
     cm,
-    makeNote(A, "AcmeAPI Rate Limits", "reference", "acme-api", [
+    makeNote(A, "AcmeAPI Rate Limits", "reference", "trading-bot", [
       "## Limits",
       "AcmeAPI caps public REST endpoints and returns HTTP 429 once you exceed the quota.",
       "",
