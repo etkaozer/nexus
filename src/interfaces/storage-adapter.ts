@@ -53,6 +53,13 @@ export interface StorageAdapter {
   /** List lightweight metadata for every note in the vault (drives reindex / scanning). */
   list(): Promise<NoteRef[]>;
 
+  /**
+   * Read EVERY note in one pass. Same result as list() + read() per uid, but a single scan
+   * instead of one full scan per note — read() resolves a uid by scanning the whole vault, so
+   * the naive loop is quadratic. Enforces the same uid-uniqueness contract as read().
+   */
+  readAll(): Promise<StoredNote[]>;
+
   /** Stat a single note (content hash + timestamps) for external-edit detection. Null if absent. */
   stat(uid: string): Promise<NoteStat | null>;
 

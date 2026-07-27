@@ -15,18 +15,35 @@ import * as sqliteVec from "sqlite-vec";
 import type {
   IndexProvider,
   NoteIndexMeta,
+  NoteMetaPatch,
+  NoteSummary,
   ChunkState,
   IndexSearchOptions,
   ScoredChunk,
 } from "../interfaces/index-provider.js";
-import type { EmbeddingProvider } from "../interfaces/embedding-provider.js";
-import type { Chunk, NoteSource } from "../types.js";
+import type { EmbeddingProvider, SimilarityCalibration } from "../interfaces/embedding-provider.js";
+import type { Chunk, NoteSource, NoteStatus, NoteType } from "../types.js";
 
 type DB = Database.Database;
 
 /** Convert an embedding vector to the compact float32 blob sqlite-vec stores/matches. */
 function toBlob(v: Float32Array): Buffer {
   return Buffer.from(v.buffer, v.byteOffset, v.byteLength);
+}
+
+/** Bind parameters shared by putNoteMeta and patchNoteMeta, so the two cannot drift. */
+function metaParams(meta: NoteMetaPatch): Record<string, string | number | null> {
+  return {
+    uid: meta.uid,
+    title: meta.title,
+    type: meta.type,
+    project: meta.project ?? null,
+    source: meta.source,
+    verified: meta.verified ? 1 : 0,
+    status: meta.status,
+    updated: meta.updated,
+    superseded_by: meta.superseded_by ?? null,
+  };
 }
 
 /** Build an FTS5 MATCH string: unicode-aware tokens, quoted, OR-joined for recall. */
@@ -46,8 +63,13 @@ interface JoinRow {
   verified: number;
   type: string;
   project: string | null;
+  status: string;
+  superseded_by: string | null;
   metric: number; // distance (vector) or bm25 (lexical)
 }
+
+/** The note columns every retrieval join needs. One definition so the arms cannot drift apart. */
+const NOTE_COLUMNS = `n.title, n.source, n.verified, n.type, n.project, n.status, n.superseded_by`;
 
 export class SqliteIndexProvider implements IndexProvider {
   private readonly db: DB;
@@ -56,6 +78,11 @@ export class SqliteIndexProvider implements IndexProvider {
   /** Live current model — reflects a model swap immediately, so reindex can heal stale vectors. */
   get embeddingModel(): string {
     return this.embeddings.model;
+  }
+
+  /** Proxied live, exactly like embeddingModel: a model swap brings its own calibration. */
+  get similarityCalibration(): SimilarityCalibration | undefined {
+    return this.embeddings.similarityCalibration;
   }
 
   constructor(dbPath: string, embeddings: EmbeddingProvider) {
@@ -99,27 +126,82 @@ export class SqliteIndexProvider implements IndexProvider {
       `CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(` +
         `chunk_id TEXT PRIMARY KEY, embedding float[${dim}] distance_metric=cosine)`,
     );
+
+    // Additive migrations. Deliberately NOT folded into the CREATE TABLE above: running the
+    // same ALTER path on a fresh database and on a user's existing brain.db means both end up
+    // with byte-identical schemas, and the legacy path is exercised by every test run rather
+    // than only on a real upgrade. Both columns are nullable — an index written by an older
+    // build stays readable, it just reports itself unbackfilled (see countUnbackfilledNotes).
+    this.addColumn("notes", "updated", "TEXT");
+    this.addColumn("notes", "superseded_by", "TEXT");
+  }
+
+  /** Add a column if the table lacks it. Idempotent, and safe on a populated table. */
+  private addColumn(table: string, column: string, decl: string): void {
+    const cols = this.db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (cols.some((c) => c.name === column)) return;
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${decl}`);
   }
 
   async putNoteMeta(meta: NoteIndexMeta): Promise<void> {
     this.db
       .prepare(
-        `INSERT INTO notes (uid, title, type, project, source, verified, status, content_hash)
-         VALUES (@uid, @title, @type, @project, @source, @verified, @status, @content_hash)
+        `INSERT INTO notes (uid, title, type, project, source, verified, status, updated, superseded_by, content_hash)
+         VALUES (@uid, @title, @type, @project, @source, @verified, @status, @updated, @superseded_by, @content_hash)
          ON CONFLICT(uid) DO UPDATE SET
            title=@title, type=@type, project=@project, source=@source,
-           verified=@verified, status=@status, content_hash=@content_hash`,
+           verified=@verified, status=@status, updated=@updated,
+           superseded_by=@superseded_by, content_hash=@content_hash`,
       )
-      .run({
-        uid: meta.uid,
-        title: meta.title,
-        type: meta.type,
-        project: meta.project ?? null,
-        source: meta.source,
-        verified: meta.verified ? 1 : 0,
-        status: meta.status,
-        content_hash: meta.content_hash,
-      });
+      .run({ ...metaParams(meta), content_hash: meta.content_hash });
+  }
+
+  async patchNoteMeta(meta: NoteMetaPatch): Promise<boolean> {
+    // UPDATE, never UPSERT, and content_hash is absent from the SET list on purpose: this runs
+    // against notes already on disk, and rewriting the write-guard baseline here would forgive
+    // an unindexed Obsidian edit — the next upsert would clobber it instead of refusing.
+    const info = this.db
+      .prepare(
+        `UPDATE notes SET title=@title, type=@type, project=@project, source=@source,
+           verified=@verified, status=@status, updated=@updated, superseded_by=@superseded_by
+         WHERE uid=@uid`,
+      )
+      .run(metaParams(meta));
+    return info.changes > 0;
+  }
+
+  async listNoteSummaries(): Promise<NoteSummary[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT uid, title, type, project, status, updated FROM notes
+         ORDER BY updated IS NULL, updated DESC, title ASC`,
+      )
+      .all() as {
+      uid: string;
+      title: string;
+      type: string;
+      project: string | null;
+      status: string;
+      updated: string | null;
+    }[];
+    return rows.map((r) => {
+      const s: NoteSummary = {
+        uid: r.uid,
+        title: r.title,
+        type: r.type as NoteType,
+        status: r.status as NoteStatus,
+        updated: r.updated,
+      };
+      if (r.project !== null) s.project = r.project;
+      return s;
+    });
+  }
+
+  async countUnbackfilledNotes(): Promise<number> {
+    const row = this.db.prepare(`SELECT COUNT(*) AS n FROM notes WHERE updated IS NULL`).get() as {
+      n: number;
+    };
+    return row.n;
   }
 
   async indexChunks(chunks: Chunk[]): Promise<void> {
@@ -252,8 +334,7 @@ export class SqliteIndexProvider implements IndexProvider {
            WHERE embedding MATCH ? ORDER BY distance LIMIT ?
          )
          SELECT knn.chunk_id, knn.distance AS metric,
-                c.note_uid, c.heading, c.content,
-                n.title, n.source, n.verified, n.type, n.project
+                c.note_uid, c.heading, c.content, ${NOTE_COLUMNS}
          FROM knn
          JOIN chunks c ON c.chunk_id = knn.chunk_id
          JOIN notes  n ON n.uid = c.note_uid
@@ -272,8 +353,7 @@ export class SqliteIndexProvider implements IndexProvider {
     const rows = this.db
       .prepare(
         `SELECT c.chunk_id, bm25(fts_chunks) AS metric,
-                c.note_uid, c.heading, c.content,
-                n.title, n.source, n.verified, n.type, n.project
+                c.note_uid, c.heading, c.content, ${NOTE_COLUMNS}
          FROM fts_chunks
          JOIN chunks c ON c.rowid = fts_chunks.rowid
          JOIN notes  n ON n.uid = c.note_uid
@@ -300,8 +380,7 @@ export class SqliteIndexProvider implements IndexProvider {
          WHERE embedding MATCH ? ORDER BY distance LIMIT ?
        )
        SELECT knn.chunk_id, knn.distance AS metric,
-              c.note_uid, c.heading, c.content,
-              n.title, n.source, n.verified, n.type, n.project
+              c.note_uid, c.heading, c.content, ${NOTE_COLUMNS}
        FROM knn
        JOIN chunks c ON c.chunk_id = knn.chunk_id
        JOIN notes  n ON n.uid = c.note_uid`,
@@ -348,7 +427,7 @@ export class SqliteIndexProvider implements IndexProvider {
   }
 
   private row(r: JoinRow, score: number): ScoredChunk {
-    return {
+    const out: ScoredChunk = {
       chunk_id: r.chunk_id,
       note_uid: r.note_uid,
       title: r.title,
@@ -356,7 +435,11 @@ export class SqliteIndexProvider implements IndexProvider {
       content: r.content,
       source: r.source as NoteSource,
       verified: r.verified === 1,
+      status: r.status as NoteStatus,
       score,
     };
+    if (r.project !== null) out.project = r.project;
+    if (r.superseded_by !== null) out.superseded_by = r.superseded_by;
+    return out;
   }
 }

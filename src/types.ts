@@ -136,14 +136,51 @@ export interface SearchOptions {
   mode?: SearchMode;
 }
 
+/**
+ * Which retrieval arm produced the chunk this hit is showing. Determines whether
+ * `similarity` can exist at all: only the vector arm computes a cosine.
+ */
+export type MatchArm = "vector" | "lexical" | "both";
+
 export interface SearchHit {
   uid: string;
   title: string;
+  /** Project slug from frontmatter, when the note has one. */
+  project?: string;
   heading: string | null;
   snippet: string;
-  score: number;
+  /**
+   * Raw cosine similarity between the query and the chunk shown above, straight from
+   * the embedding model — NOT rescaled, bucketed, or labelled. `null` when this chunk
+   * was found by the lexical arm only, which computes no cosine; a missing number is
+   * reported as missing rather than faked. Read it against the model's own calibration
+   * (surfaced in the search tool description) — the usable range is model-specific.
+   */
+  similarity: number | null;
+  /** Which arm(s) surfaced the shown chunk. "lexical" is exactly the case where similarity is null. */
+  match: MatchArm;
+  /** Reciprocal Rank Fusion score — what actually ORDERED this list. Meaningless in absolute terms. */
+  rrf_score: number;
+  /**
+   * Lifecycle status. Search deliberately does NOT filter on this (lineage must stay
+   * findable), so the caller sees "superseded"/"archived" instead of silently receiving
+   * a retired note as though it were current.
+   */
+  status: NoteStatus;
+  /** uid of the note that replaced this one. Present only when status is "superseded". */
+  superseded_by?: string;
   source: NoteSource;
   verified: boolean;
+}
+
+/**
+ * What the search tool returns: the ranked hits, plus a COMPLEMENTARY context slice.
+ * The slice deliberately describes what the hits do NOT show (vault-wide counts, what
+ * was left out, snapshot staleness) — it never restates the titles above it.
+ */
+export interface SearchResult {
+  hits: SearchHit[];
+  context: string;
 }
 
 export interface Backlink {
@@ -157,6 +194,13 @@ export interface RelatedNote {
   score: number;
 }
 
+/** A resolved supersession pointer: the uid from frontmatter plus the note's title. */
+export interface LineageRef {
+  uid: string;
+  /** null when the pointer dangles — the referenced note is not in the vault. */
+  title: string | null;
+}
+
 export interface ReadResult {
   frontmatter: Frontmatter;
   body: string;
@@ -164,6 +208,10 @@ export interface ReadResult {
   backlinks: Backlink[];
   /** Vector neighbours (derived, regenerable). Never merged into the authored links. */
   related_auto: RelatedNote[];
+  /** The older note this one replaced, resolved to uid + title. null when it replaces nothing. */
+  supersedes: LineageRef | null;
+  /** The newer note that replaced this one. Non-null means THIS NOTE IS NOT CURRENT. */
+  superseded_by: LineageRef | null;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

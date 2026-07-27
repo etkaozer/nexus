@@ -119,6 +119,29 @@ export class FileSystemAdapter implements StorageAdapter {
     }));
   }
 
+  // ONE walk for the whole vault. read() deliberately scans everything per lookup (so a
+  // duplicated uid is caught rather than silently resolved), which makes "list() then read()
+  // per uid" quadratic — fine for a handful of notes, minutes for a real vault.
+  async readAll(): Promise<StoredNote[]> {
+    const scanned = await this.scanAll();
+    const byUid = new Map<string, ScannedNote[]>();
+    for (const n of scanned) {
+      const bucket = byUid.get(n.uid);
+      if (bucket) bucket.push(n);
+      else byUid.set(n.uid, [n]);
+    }
+    // Same uniqueness contract as read(): refuse to guess rather than return one arbitrarily.
+    for (const [uid, matches] of byUid) {
+      if (matches.length > 1) {
+        throw new DuplicateUidError(
+          uid,
+          matches.map((m) => relative(this.vaultPath, m.path)).sort(),
+        );
+      }
+    }
+    return scanned.map((n) => this.toStored(n));
+  }
+
   // Always reads fresh from disk — never a cached hash. The write guard relies on
   // this returning the TRUE current on-disk state so an external Obsidian edit is
   // detected rather than masked by a stale value.

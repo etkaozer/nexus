@@ -10,19 +10,34 @@
 
 import type {
   SearchOptions,
-  SearchHit,
+  SearchResult,
   ReadResult,
   Mutation,
   MutationResult,
   ReindexOptions,
   ReindexResult,
 } from "../types.js";
+import type { VaultManifestOptions } from "../core/vault-manifest.js";
 
 export interface Engine {
   // ── query path ────────────────────────────────────────────────────────────
-  search(query: string, opts?: SearchOptions): Promise<SearchHit[]>;
+  /** Ranked hits PLUS a complementary context slice describing what the hits leave out. */
+  search(query: string, opts?: SearchOptions): Promise<SearchResult>;
   read(uid: string): Promise<ReadResult | null>;
   reindex(opts?: ReindexOptions): Promise<ReindexResult>;
+
+  /**
+   * A compact, budgeted map of the vault, for the once-per-session initialize instructions.
+   * Read-only projection off the index — never mutates, never embeds.
+   */
+  vaultManifest(opts?: VaultManifestOptions): Promise<string>;
+
+  /**
+   * Backfill mirrored note metadata for an index written by an older build. Refreshes only
+   * derived fields — it deliberately does NOT touch the write-guard baseline, so it can run at
+   * startup without weakening the external-edit guard. Returns how many rows it refreshed.
+   */
+  refreshMetadata(): Promise<number>;
 
   // ── mutation path ─────────────────────────────────────────────────────────
   /** The one entry point for every mutation. Runs write → commit → index, in order. */

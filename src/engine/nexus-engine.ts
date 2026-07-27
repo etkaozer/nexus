@@ -13,10 +13,11 @@ import type {
   NoteStatus,
   NoteSource,
   SearchOptions,
-  SearchHit,
+  SearchResult,
   ReadResult,
   Backlink,
   RelatedNote,
+  LineageRef,
   Mutation,
   MutationResult,
   MutationAction,
@@ -27,11 +28,16 @@ import type {
   ReindexResult,
 } from "../types.js";
 import type { StorageAdapter, RawNote } from "../interfaces/storage-adapter.js";
-import type { IndexProvider, NoteIndexMeta } from "../interfaces/index-provider.js";
+import type { IndexProvider, NoteIndexMeta, NoteMetaPatch } from "../interfaces/index-provider.js";
 import type { ChunkManager } from "../core/chunk-manager.js";
 import type { Engine } from "./engine.js";
 import { ChangeDetector, type ChunkDiff } from "../core/change-detector.js";
 import { HybridRetriever } from "../core/hybrid-retriever.js";
+import {
+  buildVaultManifest,
+  buildSearchContext,
+  type VaultManifestOptions,
+} from "../core/vault-manifest.js";
 import { WriteGuardError } from "./errors.js";
 import { newUid } from "../core/id.js";
 
@@ -60,18 +66,83 @@ export class NexusEngine implements Engine {
 
   // ── query path ───────────────────────────────────────────────────────────────
 
-  async search(query: string, opts: SearchOptions = {}): Promise<SearchHit[]> {
-    return this.retriever.search(query, opts);
+  async search(query: string, opts: SearchOptions = {}): Promise<SearchResult> {
+    const hits = await this.retriever.search(query, opts);
+    // The slice is assembled HERE, not in the tool layer: it is derived from vault state, which
+    // makes it engine work. The tool stays a formatter.
+    const summaries = await this.index.listNoteSummaries();
+    // status travels with each hit: the slice compares hit counts against ACTIVE vault counts,
+    // and search returns retired notes on purpose, so the two are only comparable once split.
+    const context = buildSearchContext(
+      hits.map((h) => ({ uid: h.uid, status: h.status, ...(h.project !== undefined ? { project: h.project } : {}) })),
+      summaries,
+    );
+    return { hits, context };
   }
 
   async read(uid: string): Promise<ReadResult | null> {
     const stored = await this.storage.read(uid);
     if (stored === null) return null;
-    const [backlinks, related_auto] = await Promise.all([
+    const fm = stored.frontmatter;
+    const [backlinks, related_auto, supersedes, superseded_by] = await Promise.all([
       this.computeBacklinks(uid, stored.title),
       this.computeRelated(uid),
+      this.resolveLineage(fm.supersedes),
+      this.resolveLineage(fm.superseded_by),
     ]);
-    return { frontmatter: stored.frontmatter, body: stored.body, backlinks, related_auto };
+    return {
+      frontmatter: fm,
+      body: stored.body,
+      backlinks,
+      related_auto,
+      supersedes,
+      superseded_by,
+    };
+  }
+
+  // Frontmatter carries bare uids; a bare uid is not walkable by a reader deciding whether it is
+  // holding the current version. Resolving to uid + title makes the chain legible in the response
+  // itself, rather than requiring another read just to learn what the pointer points at.
+  private async resolveLineage(uid: string | undefined): Promise<LineageRef | null> {
+    if (uid === undefined) return null;
+    const target = await this.storage.read(uid);
+    // A dangling pointer is reported as dangling. Inventing a title would be worse than a null.
+    return { uid, title: target?.title ?? null };
+  }
+
+  async vaultManifest(opts: VaultManifestOptions = {}): Promise<string> {
+    return buildVaultManifest(await this.index.listNoteSummaries(), opts);
+  }
+
+  // Backfill for an index written before `updated`/`superseded_by` were mirrored. Uses
+  // patchNoteMeta, which cannot write content_hash — refreshing the write-guard baseline from
+  // disk here would silently forgive an unindexed Obsidian edit and let the next upsert clobber it.
+  async refreshMetadata(): Promise<number> {
+    // readAll(), not list()+read() per uid: read() resolves a uid by scanning the entire vault,
+    // so the per-note loop is quadratic — measured at ~92s for 800 notes, on a path that runs
+    // before the server answers initialize.
+    const notes = await this.storage.readAll();
+    const live = new Set<string>();
+    let refreshed = 0;
+    for (const stored of notes) {
+      live.add(stored.frontmatter.uid);
+      const { content_hash: _ignored, ...patch } = this.buildMeta(stored);
+      if (await this.index.patchNoteMeta(patch as NoteMetaPatch)) refreshed += 1;
+    }
+
+    // Drop index rows whose Markdown is gone. Two reasons: such a row is garbage by definition
+    // (Markdown is the source of truth, and reindex already purges these), and while it survives
+    // its `updated` stays NULL — which would keep the startup backfill gate open forever and
+    // re-run this on every single launch.
+    //
+    // Guarded on a non-empty read: if the vault were unreachable (unmounted drive, wrong path)
+    // readAll() returns [] and an unguarded purge would wipe the whole index.
+    if (notes.length > 0) {
+      for (const summary of await this.index.listNoteSummaries()) {
+        if (!live.has(summary.uid)) await this.index.deleteNote(summary.uid);
+      }
+    }
+    return refreshed;
   }
 
   // Authored wikilink graph: notes that link TO this note. Derived by scanning the vault.
@@ -292,9 +363,11 @@ export class NexusEngine implements Engine {
       source: fm.source,
       verified: fm.verified,
       status: fm.status,
+      updated: fm.updated,
       content_hash: stored.content_hash,
     };
     if (fm.project !== undefined) meta.project = fm.project;
+    if (fm.superseded_by !== undefined) meta.superseded_by = fm.superseded_by;
     return meta;
   }
 }

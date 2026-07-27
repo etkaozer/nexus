@@ -9,6 +9,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import type { Engine } from "../engine/engine.js";
+import { guardForSearch, guardForRead } from "./guard.js";
+import type { SimilarityCalibration } from "../interfaces/embedding-provider.js";
 import type {
   SearchOptions,
   ReindexOptions,
@@ -31,19 +33,33 @@ function fail(e: unknown): CallToolResult {
   return { content: [{ type: "text", text: `ERROR: ${message}` }], isError: true };
 }
 
+export interface ServerOptions {
+  /**
+   * Sent once, in the initialize response — the vault map and the standing rules. Built by the
+   * composition root (which owns the snapshot moment), not here.
+   */
+  instructions?: string;
+  /**
+   * Calibration for the `similarity` numbers search returns, taken from whichever embedding
+   * model is actually backing the index. Passed in rather than hardcoded so a model swap
+   * carries its own numbers instead of leaving a confidently wrong sentence behind. Omitted →
+   * the description makes no calibration claim at all.
+   */
+  similarity?: SimilarityCalibration;
+}
+
 /** Wire the 6 Nexus tools over an Engine and return the (unconnected) MCP server. */
-export function createServer(engine: Engine): McpServer {
-  const server = new McpServer({ name: "nexus", version: "0.1.0" });
+export function createServer(engine: Engine, opts: ServerOptions = {}): McpServer {
+  const server = new McpServer(
+    { name: "nexus", version: "0.1.0" },
+    opts.instructions !== undefined ? { instructions: opts.instructions } : {},
+  );
 
   server.registerTool(
     "search",
     {
       title: "Search the second brain",
-      description:
-        "Find knowledge by meaning OR exact term. Hybrid mode (default) fuses semantic vector " +
-        "search with exact lexical search, so both conceptual questions and rare proper nouns " +
-        "(AcmeAPI, SessionStore, HTTP 429) hit. Returns note-level results (each matching note once, at " +
-        "its best score), not raw chunks. Filter by type or project when you know them.",
+      description: searchDescription(opts.similarity),
       inputSchema: {
         query: z.string().min(1).describe("A concept, question, or exact term to look for."),
         type: NOTE_TYPE.optional().describe("Optional filter to a single note type."),
@@ -73,7 +89,12 @@ export function createServer(engine: Engine): McpServer {
       description:
         "Read a full note by its uid: frontmatter, body, authored backlinks (notes that wikilink to " +
         "it), and related_auto (semantically similar notes, computed live at read time — never stored " +
-        "in the body). Use the uid returned by search or upsert.",
+        "in the body). Use the uid returned by search or upsert. Also returns resolved supersedes / " +
+        "superseded_by pointers (uid + title) so a supersession chain is walkable: a non-null " +
+        "superseded_by means THIS NOTE IS NOT CURRENT — read the replacement before answering from it.\n\n" +
+        // The other end of the same transaction: search says "you may not cite without reading",
+        // read is where that right is actually earned.
+        guardForRead(),
       inputSchema: {
         uid: z.string().min(1).describe("The note's stable frontmatter uid."),
       },
@@ -199,4 +220,37 @@ export function createServer(engine: Engine): McpServer {
   );
 
   return server;
+}
+
+/**
+ * The search tool description. Two things beyond "what it does":
+ *
+ *  • the citation guard, repeated from the initialize instructions on purpose — this is where a
+ *    reader is standing at the exact moment the temptation applies, holding titles and snippets
+ *    that look like answers;
+ *  • the similarity calibration, taken from the live model. A raw cosine invites a 0-1 reading
+ *    that is wrong for every sentence encoder in practice, so the number ships with a statement
+ *    of where that model's scores actually land — descriptive, leaving all judgement to the reader.
+ */
+function searchDescription(calibration?: SimilarityCalibration): string {
+  const base =
+    "Find knowledge by meaning OR exact term. Hybrid mode (default) fuses semantic vector " +
+    "search with exact lexical search, so both conceptual questions and rare proper nouns " +
+    "(AcmeAPI, SessionStore, HTTP 429) hit. Returns note-level results (each matching note once, at " +
+    "its best score), not raw chunks, plus a `context` slice describing what the results leave out. " +
+    "Filter by type or project when you know them.\n\n" +
+    "Each hit carries: `similarity` (raw cosine for the chunk shown, or null when the chunk was " +
+    "found by the lexical arm only — which computes no cosine, so none is invented), `match` " +
+    "(vector | lexical | both), `rrf_score` (what ordered the list; meaningless in absolute terms), " +
+    "and `status`.\n\n" +
+    "Results are NOT filtered by status, so lineage stays findable. A hit with status 'superseded' " +
+    "was replaced — follow its `superseded_by` and read the replacement instead of answering from it.\n\n" +
+    // Carried HERE, not only in the initialize instructions: hosts may discard instructions, but
+    // tool descriptions are always delivered — and this is the exact moment the temptation applies,
+    // with titles and snippets in hand that read like finished answers.
+    guardForSearch();
+
+  return calibration === undefined
+    ? base
+    : `${base}\n\nInterpreting \`similarity\`: ${calibration.note}`;
 }

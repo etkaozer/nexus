@@ -154,14 +154,16 @@ The surface is exactly these six — no more.
 
 | Tool | Intent | Params |
 |------|--------|--------|
-| `search` | Find knowledge by meaning **or** exact term. Hybrid fuses semantic + lexical; returns note-level hits. | `query`, `type?`, `project?`, `k?`, `mode?` (`hybrid`\|`vector`\|`lexical`) |
-| `read` | Read a full note: frontmatter, body, authored backlinks, and live semantic neighbours. | `uid` |
+| `search` | Find knowledge by meaning **or** exact term. Hybrid fuses semantic + lexical; returns `{ hits, context }` — note-level hits plus a complementary context slice. | `query`, `type?`, `project?`, `k?`, `mode?` (`hybrid`\|`vector`\|`lexical`) |
+| `read` | Read a full note: frontmatter, body, authored backlinks, live semantic neighbours, and resolved supersession pointers. | `uid` |
 | `upsert` | Create (omit `uid`) or overwrite (give `uid`, write-guarded) a whole note. `supersedes` replaces + archives an older note. | `uid?`, `title`, `type`, `project?`, `body`, `source`, `supersedes?` |
 | `archive` | Mark `status: archived`, keep the file. No hard delete. | `uid` |
 | `link` | Add an authored `[[wikilink]]` in a `## Links` section (idempotent). | `from_uid`, `to_uid`, `relation?` |
 | `reindex` | Rebuild the derived index from Markdown. Idempotent, hash-diff based. Run after editing in Obsidian. | `uid?` |
 
-`read` returns `related_auto` computed live from the index at call time; it's empty for a note with no indexed neighbours yet (a single-note vault, or before the first `reindex`).
+`read` returns `related_auto` computed live from the index at call time; it's empty for a note with no indexed neighbours yet (a single-note vault, or before the first `reindex`). It also returns `supersedes` / `superseded_by` as `{ uid, title }` (or `null`), so a supersession chain is walkable without a second lookup — a non-null `superseded_by` means the note you just read is **not** the current one.
+
+Each search hit carries `similarity` (the raw cosine for the chunk shown, or `null` when the chunk came from the lexical arm only — which computes no cosine, so none is invented), `match` (`vector`\|`lexical`\|`both`), `rrf_score` (what ordered the list), and `status` + `superseded_by`. Search deliberately does **not** filter by status, so lineage stays findable; carrying `status` on the hit is what stops a retired note from being read as current.
 
 The **caller** chooses a note's `type` and `source`; the engine never infers them. Errors that need a human decision (a write-guard conflict, a duplicate uid) come back as clean, actionable tool errors — not stack traces.
 
@@ -188,6 +190,10 @@ tags:           # optional []
 ## How it works under the hood
 
 **Hybrid retrieval.** A query runs two ways at once: cosine KNN over e5 vectors (`sqlite-vec`) for meaning, and BM25 (`FTS5`) for exact/rare tokens (`AcmeAPI`, `SessionStore`, `HTTP 429`) that embeddings tend to blur. The two ranked lists are fused with **Reciprocal Rank Fusion** (`1/(k+rank)`, k=60), then **rolled up to note level** — a note that matched on several chunks appears once, at its best score. Fusion and roll-up happen in the `HybridRetriever` (core layer), never inside the index.
+
+**Recall priming.** The model almost never searches an *opaque* vault — not from laziness, but because a search of unknown expected value is a rational thing to skip. So at session start the server sends a **vault map** in the MCP `initialize` instructions: every project slug (always — coarse coverage is never the thing that gets truncated), then active note titles filled round-robin across projects in recency order until a ~900-token budget runs out, with per-project truncation stated explicitly (`nexus — 60 active notes, 56 shown (use search for the rest)`). Archived and superseded notes are excluded; the map is stamped as a snapshot, because a note written in another chat afterwards genuinely won't be in it. Deciding whether to search becomes a lookup instead of a gamble. The map is sent **once** — re-sending identical text on every tool response just trains a reader to skim it. The one per-call exception is search's `context` slice, whose content differs every call and describes what the results *leave out*.
+
+> **Host caveat, stated plainly.** `initialize.instructions` is the correct channel for this, and Nexus emits it correctly — but a host is not obliged to forward it to the model, and **Claude Desktop currently discards it**, so the map does not reach the model there. This is accepted rather than worked around: the map is far too large to weld into a tool description, and per-response injection would defeat its own purpose. It starts working with zero code change once a host honours instructions. Until then, one line of prompting does the same job — *"start by asking Nexus what's in my vault."* Anything that **must** reach the model regardless — the citation guard, the staleness rule, the `similarity` calibration — lives in the `search` and `read` **tool descriptions**, which are always delivered.
 
 **Semantic chunking.** The body is split on the **shallowest heading level actually present** — a note whose sections are `#` splits on `#`, one whose sections are `##` splits on `##`. Content before the first heading becomes a `__preamble` chunk. Headings deeper than the split level are content, not boundaries. A section over the embedder's token budget (~450 for e5) is sub-split on the next-deeper level, then a fixed-size fallback. Chunk `content_hash` is computed over anchor-stripped text, so injecting a `<!-- cid -->` anchor is semantically inert and never triggers a spurious re-embed.
 

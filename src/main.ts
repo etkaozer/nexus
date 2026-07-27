@@ -19,6 +19,9 @@ import { E5EmbeddingProvider } from "./embeddings/e5-embedding-provider.js";
 import { MarkdownChunkManager } from "./core/markdown-chunk-manager.js";
 import { NexusEngine } from "./engine/nexus-engine.js";
 import { createServer } from "./mcp/server.js";
+import { buildInstructions } from "./mcp/instructions.js";
+import type { Engine } from "./engine/engine.js";
+import type { IndexProvider } from "./interfaces/index-provider.js";
 
 async function resolvePaths(vaultArg: string): Promise<{ vaultPath: string; dbPath: string }> {
   const vaultPath = resolve(vaultArg);
@@ -45,9 +48,49 @@ async function runReindex(vaultArg: string): Promise<void> {
   index.close();
 }
 
+/**
+ * Bring an index written by an older build up to what the vault map needs.
+ *
+ * The schema migration itself already happened (SqliteIndexProvider ALTERs on open), but the new
+ * columns are empty until something writes them. Left alone, a user who pulls this build gets a
+ * map with no recency ordering and NO explanation — the exact silent-degradation failure the map
+ * exists to remove. So it is backfilled automatically, and every branch says what it did.
+ *
+ * Metadata only: no chunking, no embedding, no writes to the vault, and never the write-guard
+ * baseline. Cheap enough to run before the transport connects.
+ */
+async function backfillIfNeeded(engine: Engine, index: IndexProvider): Promise<void> {
+  let stale: number;
+  try {
+    stale = await index.countUnbackfilledNotes();
+  } catch (e: unknown) {
+    console.error("Nexus: could not check index metadata; the vault map may be degraded:", errMsg(e));
+    return;
+  }
+  if (stale === 0) return;
+
+  console.error(`Nexus: index predates the vault-map metadata (${stale} note(s)). Backfilling — no re-embedding…`);
+  try {
+    const n = await engine.refreshMetadata();
+    const left = await index.countUnbackfilledNotes();
+    console.error(`Nexus: backfilled ${n} note(s).`);
+    if (left > 0) {
+      console.error(
+        `Nexus: ${left} note(s) are indexed but missing from the vault on disk — run 'nexus-mcp reindex <vault>' to reconcile.`,
+      );
+    }
+  } catch (e: unknown) {
+    console.error(
+      "Nexus: metadata backfill failed — the vault map will be missing recency ordering.",
+      "Run 'nexus-mcp reindex <vault>' to fix it. Cause:",
+      errMsg(e),
+    );
+  }
+}
+
 async function runServer(vaultArg: string): Promise<void> {
   const { vaultPath, dbPath } = await resolvePaths(vaultArg);
-  const { embeddings, engine } = build(vaultPath, dbPath);
+  const { embeddings, index, engine } = build(vaultPath, dbPath);
 
   // Pre-warm in the BACKGROUND so the first real tool call doesn't silently block ~3 min.
   // A concurrent embed() awaits the same in-flight load — no double download.
@@ -57,7 +100,23 @@ async function runServer(vaultArg: string): Promise<void> {
     .then(() => console.error("Nexus: embedding model ready."))
     .catch((e: unknown) => console.error("Nexus: model warmup failed (will retry on first use):", errMsg(e)));
 
-  const server = createServer(engine);
+  await backfillIfNeeded(engine, index);
+
+  // The map is a SNAPSHOT, taken here, once. For stdio that is exactly one process per client
+  // session, so "session start" is literal. It is built before connect() because the SDK reads
+  // `instructions` when it constructs the initialize response — and it needs no embedding model,
+  // so it does not wait on the warmup above.
+  // Checked against the DATA, not by pattern-matching the rendered map: a wording change in the
+  // manifest must not silently switch this warning off.
+  if (!(await index.listNoteSummaries()).some((n) => n.status === "active")) {
+    console.error("Nexus: the index has no active notes — run 'nexus-mcp reindex <vault>' or recall will not fire.");
+  }
+  const vaultMap = await engine.vaultManifest({ now: new Date().toISOString() });
+
+  const server = createServer(engine, {
+    instructions: buildInstructions(vaultMap),
+    ...(index.similarityCalibration !== undefined ? { similarity: index.similarityCalibration } : {}),
+  });
   await server.connect(new StdioServerTransport());
   console.error(`Nexus MCP server ready. vault=${vaultPath} db=${dbPath}`);
 }

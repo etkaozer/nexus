@@ -56,6 +56,7 @@ async function indexNote(cm: MarkdownChunkManager, note: Note): Promise<void> {
     source: note.frontmatter.source,
     verified: note.frontmatter.verified,
     status: note.frontmatter.status,
+    updated: note.frontmatter.updated,
     content_hash: sha256(body),
   };
   if (note.frontmatter.project !== undefined) meta.project = note.frontmatter.project;
@@ -201,6 +202,7 @@ test("anchor text (<!-- cid -->) never reaches the embedder", async (t) => {
     source: "manual",
     verified: false,
     status: "active",
+    updated: "2026-01-01T00:00:00.000Z",
     content_hash: sha256(body),
   });
   await idx.indexChunks(chunks);

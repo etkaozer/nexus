@@ -10,11 +10,17 @@ export type { StorageAdapter, CommitInfo } from "./interfaces/storage-adapter.js
 export type {
   IndexProvider,
   NoteIndexMeta,
+  NoteMetaPatch,
+  NoteSummary,
   ChunkState,
   ScoredChunk,
   IndexSearchOptions,
 } from "./interfaces/index-provider.js";
-export type { EmbeddingProvider, EmbeddingKind } from "./interfaces/embedding-provider.js";
+export type {
+  EmbeddingProvider,
+  EmbeddingKind,
+  SimilarityCalibration,
+} from "./interfaces/embedding-provider.js";
 export { E5EmbeddingProvider } from "./embeddings/e5-embedding-provider.js";
 export type { E5Options } from "./embeddings/e5-embedding-provider.js";
 export { SqliteIndexProvider } from "./index/sqlite-index-provider.js";
@@ -26,6 +32,11 @@ export type { ChunkManagerOptions } from "./core/markdown-chunk-manager.js";
 export { ChangeDetector } from "./core/change-detector.js";
 export type { ChunkDiff } from "./core/change-detector.js";
 export { WriteGuardError } from "./engine/errors.js";
+export { buildVaultManifest, buildSearchContext, estimateTokens, NO_PROJECT } from "./core/vault-manifest.js";
+export type { VaultManifestOptions, SearchContextOptions, ContextHit } from "./core/vault-manifest.js";
 export { createServer } from "./mcp/server.js";
+export type { ServerOptions } from "./mcp/server.js";
+export { buildInstructions } from "./mcp/instructions.js";
+export { GUARD, guardForSearch, guardForRead, guardForInstructions } from "./mcp/guard.js";
 
 export type * from "./types.js";

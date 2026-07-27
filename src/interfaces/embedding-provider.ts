@@ -16,6 +16,28 @@
  */
 export type EmbeddingKind = "passage" | "query";
 
+/**
+ * How THIS model's cosine similarities are actually distributed — a model-specific quirk,
+ * so it lives on the same axis of change as the prefixes above.
+ *
+ * Cosine is nominally [−1, 1], but real sentence encoders occupy a much narrower band:
+ * multilingual-e5-small scores ~0.70 between completely unrelated texts. Publishing a raw
+ * cosine without saying so invites the reader to apply a 0–1 intuition that is simply wrong
+ * for the model in use. This is descriptive calibration, not classification: it reports where
+ * the numbers actually land and leaves every judgement to the caller.
+ *
+ * A provider that omits this says "I don't know my distribution" — callers then present the
+ * cosine with no calibration claim at all, rather than inheriting some other model's numbers.
+ */
+export interface SimilarityCalibration {
+  /** Cosine that unrelated text still reaches — the practical floor, NOT 0. */
+  floor: number;
+  /** Cosine at/above which a hit is typically a genuine topical match. */
+  strong: number;
+  /** One sentence naming the model and its band, for a human or an LLM to read. */
+  note: string;
+}
+
 export interface EmbeddingProvider {
   /**
    * Identifier of the underlying model, e.g. "Xenova/multilingual-e5-small".
@@ -32,4 +54,12 @@ export interface EmbeddingProvider {
    * input, in order. Each vector has length `dim`.
    */
   embed(texts: string[], kind: EmbeddingKind): Promise<Float32Array[]>;
+
+  /**
+   * Where this model's cosines actually land. Optional: omit it rather than guess —
+   * a wrong calibration is worse than none, because it is stated with confidence.
+   */
+  // `| undefined` is explicit because exactOptionalPropertyTypes is on: an implementation may
+  // satisfy this with a GETTER, and a getter is always present — it can only return undefined.
+  readonly similarityCalibration?: SimilarityCalibration | undefined;
 }
