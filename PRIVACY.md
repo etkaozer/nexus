@@ -46,7 +46,7 @@ it makes exactly one outbound network request in its lifetime, described next.
 **Nexus downloads its embedding model once, from Hugging Face.**
 
 On first use, Nexus downloads [`Xenova/multilingual-e5-small`](https://huggingface.co/Xenova/multilingual-e5-small)
-(approximately 110 MB) from `huggingface.co` and caches it under `~/.cache/nexus/models`. This is
+(approximately 487 MB) from `huggingface.co` and caches it under `~/.cache/nexus/models`. This is
 the only time Nexus contacts the internet.
 
 What that request involves:
@@ -62,6 +62,11 @@ What that request involves:
 
 If you prefer to avoid this request entirely, you can pre-populate the model cache directory from
 another machine, or from a mirror, before first run.
+
+**If you install Nexus with `npx`:** npm itself — not Nexus — downloads the package from the npm
+registry the first time, and by default asks that registry for a newer version each time your MCP
+host launches it. Those requests carry no note data. The recommended `--prefer-offline` launch flag
+(see the README) skips the per-launch check.
 
 ## 5. What your AI assistant sees
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Nexus MCP server entry point (stdio transport).
 //
-//   nexus-mcp <vault-path>          → run the MCP server (vault also via NEXUS_VAULT)
-//   nexus-mcp reindex [vault-path]  → one-shot reindex/bootstrap, then exit
+//   nexus-brain-mcp <vault-path>          → run the MCP server (vault also via NEXUS_VAULT)
+//   nexus-brain-mcp reindex [vault-path]  → one-shot reindex/bootstrap, then exit
 //
 // The derived index lives OUTSIDE the vault by default (~/.cache/nexus/brain.db), so the
 // vault git history stays Markdown-only. Override with NEXUS_DB.
@@ -42,7 +42,7 @@ function build(vaultPath: string, dbPath: string) {
 async function runReindex(vaultArg: string): Promise<void> {
   const { vaultPath, dbPath } = await resolvePaths(vaultArg);
   const { embeddings, index, engine } = build(vaultPath, dbPath);
-  console.error(`Nexus: reindexing ${vaultPath} (db=${dbPath}). First run downloads the model (~110MB, ~3 min)…`);
+  console.error(`Nexus: reindexing ${vaultPath} (db=${dbPath}). First run downloads the embedding model (~487 MB, one time)…`);
   await embeddings.warmup();
   const result = await engine.reindex();
   console.error(`Nexus: reindex complete — ${JSON.stringify(result)}`);
@@ -77,13 +77,13 @@ async function backfillIfNeeded(engine: Engine, index: IndexProvider): Promise<v
     console.error(`Nexus: backfilled ${n} note(s).`);
     if (left > 0) {
       console.error(
-        `Nexus: ${left} note(s) are indexed but missing from the vault on disk — run 'nexus-mcp reindex <vault>' to reconcile.`,
+        `Nexus: ${left} note(s) are indexed but missing from the vault on disk — run 'nexus-brain-mcp reindex <vault>' to reconcile.`,
       );
     }
   } catch (e: unknown) {
     console.error(
       "Nexus: metadata backfill failed — the vault map will be missing recency ordering.",
-      "Run 'nexus-mcp reindex <vault>' to fix it. Cause:",
+      "Run 'nexus-brain-mcp reindex <vault>' to fix it. Cause:",
       errMsg(e),
     );
   }
@@ -93,9 +93,9 @@ async function runServer(vaultArg: string): Promise<void> {
   const { vaultPath, dbPath } = await resolvePaths(vaultArg);
   const { embeddings, index, engine } = build(vaultPath, dbPath);
 
-  // Pre-warm in the BACKGROUND so the first real tool call doesn't silently block ~3 min.
+  // Pre-warm in the BACKGROUND so the first real tool call doesn't silently block on the ~487 MB download.
   // A concurrent embed() awaits the same in-flight load — no double download.
-  console.error("Nexus: pre-warming embedding model in the background (first run downloads ~110MB)…");
+  console.error("Nexus: pre-warming embedding model in the background (first run downloads ~487 MB)…");
   void embeddings
     .warmup()
     .then(() => console.error("Nexus: embedding model ready."))
@@ -110,7 +110,7 @@ async function runServer(vaultArg: string): Promise<void> {
   // Checked against the DATA, not by pattern-matching the rendered map: a wording change in the
   // manifest must not silently switch this warning off.
   if (!(await index.listNoteSummaries()).some((n) => n.status === "active")) {
-    console.error("Nexus: the index has no active notes — run 'nexus-mcp reindex <vault>' or recall will not fire.");
+    console.error("Nexus: the index has no active notes — run 'nexus-brain-mcp reindex <vault>' or recall will not fire.");
   }
   const vaultMap = await engine.vaultManifest({ now: new Date().toISOString() });
 

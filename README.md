@@ -29,12 +29,10 @@ No re-explaining, no scrolling back through old chats. The knowledge was in your
 ## Quick start
 
 ```bash
-git clone https://github.com/etkaozer/nexus.git nexus && cd nexus
-npm install && npm run build
-NEXUS_VAULT="/path/to/YourVault" node ./dist/main.js reindex   # back up your vault first
+npx -y nexus-brain-mcp reindex "/path/to/YourVault"   # back up your vault first
 ```
 
-Then add Nexus to your MCP host's config (absolute paths — see [Installation](#installation) for details), restart it, and you're set. Full setup, prerequisites, and troubleshooting are in [Installation](#installation) below.
+Then register `npx -y --prefer-offline nexus-brain-mcp /path/to/YourVault` as a stdio server in your MCP host and restart it. Supported platforms, prerequisites, per-host config, and troubleshooting are in [Installation](#installation) below.
 
 ## The core idea
 
@@ -229,12 +227,75 @@ Unchanged chunks are left untouched; running `reindex` twice does nothing the se
 
 - **Node ≥ 22** — check with `node --version`. (Node 20 reached end-of-life in April 2026, and `better-sqlite3` no longer publishes a prebuilt binary for it.)
 - **A C/C++ toolchain**, *only* if `npm install` can't use prebuilt binaries for the native modules (`better-sqlite3`, `onnxruntime-node`). Most platforms get prebuilds and need nothing extra; if a source build is triggered, install: macOS → `xcode-select --install`; Debian/Ubuntu → `sudo apt install build-essential python3`; Windows → Visual Studio's "Desktop development with C++" workload.
-- **`git` on your `PATH`** — check with `git --version`. Not optional: every mutation (`upsert`, `link`, `archive`) and the bootstrap pass of `reindex` commits to a git repo inside your vault, so without git those tools fail. macOS → `xcode-select --install`; Debian/Ubuntu → `sudo apt install git`; Windows → [git-scm.com](https://git-scm.com).
-- **~150 MB free disk** for the embedding model and index (fetched/built once, then reused).
+- **`git` on your `PATH`** — check with `git --version`. Not optional, and not only for writes: the first `reindex` commits to a git repo inside your vault, so without git it fails with `spawn git ENOENT` and indexes nothing. `search` and `read` then have nothing to return and every write fails too — nothing works until git is installed. macOS → `xcode-select --install`; Debian/Ubuntu → `sudo apt install git`; Windows → [git-scm.com](https://git-scm.com).
+- **Free disk:** the embedding model is **~487 MB** (downloaded once, then reused). On top of that, the `npx` install takes ~640 MB (~430 MB of dependencies plus npm's cache of them; ~300 MB more on Linux x64 unless you skip the GPU providers — see Option A), a source checkout ~460 MB, and the `.mcpb` bundle ~90 MB. Budget **~1.1 GB** for `npx`, **~600 MB** for the bundle.
 - **Claude Desktop** (or any MCP client) to use it interactively — optional if you only run the CLI.
 - **An Obsidian vault** — or any folder of Markdown files, or even an empty folder Nexus will create and manage for you.
 
-### Option A · Desktop Extension (`.mcpb`) — no terminal needed
+### Option A · `npx` — recommended, any supported platform
+
+Nothing to clone or build. On first launch npm downloads Nexus together with the native binaries
+for *your* platform and Node version (`better-sqlite3`, `sqlite-vec`, `onnxruntime-node`, `sharp`).
+
+| Platform | Status |
+|---|---|
+| macOS, Apple Silicon | ✅ Tested on Node 22, 24, 25, 26 |
+| Linux x64 / arm64 (glibc: Debian, Ubuntu, Fedora…) | ✅ Tested on Node 22 (arm64) and 24 (x64) |
+| Windows x64 | ⚠️ Every dependency publishes a binary for it, but Nexus itself is untested there |
+| macOS, Intel | ❌ `onnxruntime-node` publishes no `darwin-x64` binary |
+| Windows on ARM, Alpine/musl Linux | ❌ No `sqlite-vec` / `onnxruntime-node` build |
+
+**1 · Bootstrap once, from a terminal.** This installs the package, downloads the embedding model
+(~487 MB), and indexes your vault, so your MCP host's first launch doesn't have to sit through all
+of that inside its startup timeout:
+
+```bash
+# BACK UP FIRST — bootstrap rewrites every note once (adds uid + anchors).
+npx -y nexus-brain-mcp reindex "/path/to/YourVault"
+```
+
+**2 · Register it with your MCP host.** The vault path is the only argument.
+
+Claude Code:
+
+```bash
+claude mcp add nexus -- npx -y --prefer-offline nexus-brain-mcp /path/to/YourVault
+```
+
+Claude Desktop and other JSON-configured hosts:
+
+```json
+{
+  "mcpServers": {
+    "nexus": {
+      "command": "npx",
+      "args": ["-y", "--prefer-offline", "nexus-brain-mcp", "/path/to/YourVault"]
+    }
+  }
+}
+```
+
+`--prefer-offline` makes npm start Nexus from its cache without checking the registry first.
+Without it, every launch asks the npm registry for a newer version — and with no network, npm
+retries for about 70 seconds before falling back to the cache, which is longer than most hosts
+wait for a server to start. The trade-off is that updates aren't picked up automatically: to move
+to a new release, re-run the step 1 command while online.
+
+- **Windows:** `npx` is a `.cmd` shim that most hosts can't launch directly — wrap it:
+  `"command": "cmd", "args": ["/c", "npx", "-y", "--prefer-offline", "nexus-brain-mcp", "C:\\path\\to\\YourVault"]`
+  (Claude Code: `claude mcp add nexus -- cmd /c npx -y --prefer-offline nexus-brain-mcp C:\path\to\YourVault`).
+- **macOS, Claude Desktop:** the app doesn't inherit your shell's `PATH`. If the server can't
+  start because `npx` or `node` isn't found (common with nvm), set `command` to the absolute path
+  from `which npx` and add `"env": { "PATH": "<directory containing node>:/usr/bin:/bin" }` —
+  `/usr/bin` is where git lives.
+- **Linux x64:** `onnxruntime-node`'s install script also downloads its CUDA/TensorRT GPU providers
+  from NuGet (~300 MB). Nexus runs on the CPU and never uses them. To skip that download, run step 1
+  as `ONNXRUNTIME_NODE_INSTALL=skip npx -y nexus-brain-mcp reindex …`, and add
+  `"ONNXRUNTIME_NODE_INSTALL": "skip"` to the server's `env` so a later reinstall skips it too.
+
+Then fully quit and reopen the host.
+
+### Option B · Desktop Extension (`.mcpb`) — macOS Apple Silicon, no terminal needed
 
 Claude Desktop installs Nexus as a bundle: double-click `nexus.mcpb`, or **Settings → Extensions →
 Install Extension…**, and pick your vault folder when prompted. Node and git still have to be
@@ -242,7 +303,7 @@ present (above), but nothing needs to be cloned, installed, or built.
 
 The bundle is macOS/Apple Silicon only, and carries a SQLite binding for each of Node 22/24/25/26 —
 if you are on some other Node, the server says so by name at startup instead of failing obscurely.
-Building it yourself is one command:
+Every other platform: use `npx` (Option A). Building the bundle yourself is one command:
 
 ```bash
 npm run pack:mcpb        # build → fetch native bindings → preflight → nexus.mcpb
@@ -251,9 +312,9 @@ npm run pack:mcpb        # build → fetch native bindings → preflight → nex
 For the full install-and-exercise walkthrough — including a five-note sample vault that makes every
 tool testable on a fresh install — see **[REVIEWERS.md](REVIEWERS.md)**.
 
-### Option B · From source
+### Option C · From source
 
-Use this for any other platform, any other MCP host, or to develop on Nexus.
+Use this to develop on Nexus, or to run an unreleased version.
 
 #### 1 · Clone, install, build
 
@@ -271,7 +332,7 @@ npm run build    # compiles TypeScript → dist/
 npm test         # 96 tests
 ```
 
-The integration tests exercise the **real** local embedding model, so the *first* `npm test` needs network access and a few minutes while `multilingual-e5-small` (~110 MB) downloads to `~/.cache/nexus/models`. Every run after that is offline and takes ~20s. All 96 should pass.
+The integration tests exercise the **real** local embedding model, so the *first* `npm test` needs network access and a few minutes while `multilingual-e5-small` (~487 MB) downloads to `~/.cache/nexus/models`. Every run after that is offline and takes ~20s. All 96 should pass.
 
 #### 3 · Point Nexus at a vault and bootstrap it
 
@@ -350,21 +411,22 @@ NEXUS_VAULT="/path/to/YourVault" node ./dist/main.js reindex
 
 ```bash
 # One-shot reindex / bootstrap, then exit (safe to re-run).
-NEXUS_VAULT=<vault> node ./dist/main.js reindex
+npx -y nexus-brain-mcp reindex <vault>         # from source: NEXUS_VAULT=<vault> node ./dist/main.js reindex
 
-# Run the MCP server in the foreground (normally Claude Desktop does this for you).
-NEXUS_VAULT=<vault> node ./dist/main.js
+# Run the MCP server in the foreground (normally your MCP host does this for you).
+npx -y nexus-brain-mcp <vault>                 # from source: NEXUS_VAULT=<vault> node ./dist/main.js
 ```
 
 | Env var | Purpose | Default |
 |---|---|---|
-| `NEXUS_VAULT` | Path to your vault (**required**). | — |
+| `NEXUS_VAULT` | Path to your vault (**required** — or pass it as the argument; the env var wins if both are set). | — |
 | `NEXUS_DB` | Where the index file lives. | `~/.cache/nexus/brain.db` |
 
 ### Troubleshooting
 
 - **`npm install` fails compiling `better-sqlite3` / `onnxruntime-node`** — install a C/C++ toolchain (see [Prerequisites](#prerequisites)), then `rm -rf node_modules && npm install`.
-- **First search seems to hang** — the ~110 MB model is still downloading on first use; watch the server's stderr. It's a one-time cost, then fully offline.
+- **First search seems to hang** — the ~487 MB model is still downloading on first use; watch the server's stderr. It's a one-time cost, then fully offline. Running `reindex` from a terminal first (Option A, step 1) gets it out of the way.
+- **`reindex` fails with `spawn git ENOENT`, and nothing is searchable** — git isn't on the `PATH` Nexus was started with, so the index was never built. Install git (see [Prerequisites](#prerequisites)) and reindex again.
 - **"Refusing to overwrite … modified on disk"** — you edited that note in Obsidian; run `reindex` and retry.
 - **The `nexus` tools don't appear in Claude Desktop** — confirm the config JSON is valid, both paths are absolute (`node` **and** `dist/main.js`), `dist/` exists (`npm run build`), and that you *fully quit* and reopened the app.
 
@@ -388,7 +450,7 @@ no server, no account, no backend, and nothing to sign in to. The full policy is
 - **Embeddings run locally**, on your CPU, offline.
 
 **The one external network call.** On first use Nexus downloads
-[`Xenova/multilingual-e5-small`](https://huggingface.co/Xenova/multilingual-e5-small) (~110 MB)
+[`Xenova/multilingual-e5-small`](https://huggingface.co/Xenova/multilingual-e5-small) (~487 MB)
 from `huggingface.co` and caches it under `~/.cache/nexus/models`. It is a plain fetch of public
 files — none of your notes, queries, or filenames are involved, and it happens before any of your
 data is read. After it completes Nexus never contacts the network again. You can pre-populate that
@@ -427,7 +489,7 @@ Questions: etkaozer0@gmail.com · [issues](https://github.com/etkaozer/nexus/iss
 
 ### Future ideas
 
-- **Move the index to `node:sqlite`** — the highest-value item here, and it is a packaging fix, not a feature. `better-sqlite3` is not an N-API addon: each prebuilt binary is locked to one Node ABI, which is why the `.mcpb` bundle has to ship four of them and is pinned to a single platform. Node's built-in `node:sqlite` (with `loadExtension` for `sqlite-vec`) needs no prebuilds at all, which would make the bundle genuinely cross-platform and delete `scripts/fetch-prebuilds.mjs` and `src/index/native-binding.ts` outright. The cost is a rewrite of `SqliteIndexProvider` against a different API, and a Node ≥ 24 floor.
+- **Move the index to `node:sqlite`** — a packaging simplification, not a feature. `better-sqlite3` is not an N-API addon: each prebuilt binary is locked to one Node ABI, which is why the `.mcpb` bundle has to ship four of them and needs re-packing for every new Node major. Node's built-in `node:sqlite` loads `sqlite-vec` through `loadExtension` (tested on Node 22.20, 24, 25 and 26; vec0 rowids must be bound as `BigInt`), which would delete `scripts/fetch-prebuilds.mjs` and `src/index/native-binding.ts` outright. It would **not** make a single bundle cross-platform on its own: `sqlite-vec`, `onnxruntime-node` and `sharp` still ship per-platform binaries, which is the problem the `npx` install solves. The cost is a rewrite of `SqliteIndexProvider` against a different API.
 - **Frontmatter-anchor alternative** — store chunk slugs in a frontmatter map instead of inline comments, for people who spend most of their time in Live Preview and want zero visible artifacts in the body.
 - **Block-level granularity** — anchor and retrieve at the paragraph/list-item level, not just the heading section.
 - **Non-MCP ingesters** — standalone importers that pour ChatGPT exports, repositories, or web clippings into the vault as `source`-tagged notes, so Nexus becomes the merge point for knowledge from many tools, not just the one talking to it live.

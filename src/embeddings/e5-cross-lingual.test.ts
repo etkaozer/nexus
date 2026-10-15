@@ -17,7 +17,7 @@
 // nicety. Test two deliberately pins a LIMITATION. If a future model swap fixes it, that test
 // fails — and that failure is the notification, not a regression.
 //
-// These use the REAL model (~110MB, downloaded once to ~/.cache/nexus/models), because a fake
+// These use the REAL model (~487 MB, downloaded once to ~/.cache/nexus/models), because a fake
 // embedder cannot have a language bias to find. Everything else in the suite stays fake and fast.
 //
 // Run: npm test

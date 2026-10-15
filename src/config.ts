@@ -4,7 +4,7 @@
  * Decide which vault to open, from the environment and an optional positional argument.
  *
  * Both paths into Nexus lead here: `NEXUS_VAULT` (how every MCP host configures it, including the
- * MCPB bundle) and `nexus-mcp <vault>` (the CLI). Throws rather than guessing — every alternative
+ * MCPB bundle) and `nexus-brain-mcp <vault>` (the CLI). Throws rather than guessing — every alternative
  * to throwing produces a server that starts fine and then quietly indexes the wrong directory,
  * which is the failure a user is least equipped to diagnose.
  */
@@ -15,7 +15,7 @@ export function resolveVaultPath(env: Record<string, string | undefined>, positi
   if (candidate === undefined || candidate.length === 0) {
     throw new Error(
       "Nexus: no vault path. Set NEXUS_VAULT to the folder holding your Markdown notes, " +
-        "or pass it as an argument: nexus-mcp <vault>.",
+        "or pass it as an argument: nexus-brain-mcp <vault>.",
     );
   }
 

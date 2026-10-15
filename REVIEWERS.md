@@ -18,8 +18,8 @@ Two of these are the difference between a working install and a dead one.
 |---|---|---|
 | **macOS on Apple Silicon** | `uname -sm` → `Darwin arm64` | This bundle ships `darwin-arm64` native binaries only. Intel Macs, Windows and Linux are not covered by this build. |
 | **Node.js 22, 24, 25 or 26** | `node --version` | The bundle carries a SQLite binding per Node ABI. Outside that set the server exits immediately with a message naming your version. |
-| **`git` on `PATH`** | `git --version` | **Four of the six tools need it.** Every write (`upsert`, `link`, `archive`) and the first `reindex` commit to a git repo inside the vault. Without git those four fail. On a fresh Mac, run `xcode-select --install` if the check fails. |
-| **~250 MB free disk** | — | Bundle ~90 MB unpacked, embedding model ~110 MB, index a few MB. |
+| **`git` on `PATH`** | `git --version` | **Nothing works without it.** The first `reindex` commits to a git repo inside the vault, so without git it fails with `spawn git ENOENT` and indexes nothing: `search` and `read` have nothing to return, and every write (`upsert`, `link`, `archive`) fails too. On a fresh Mac, run `xcode-select --install` if the check fails. |
+| **~600 MB free disk** | — | Bundle ~90 MB unpacked, embedding model ~487 MB, index a few MB. |
 
 No API keys, no accounts, no network configuration.
 
@@ -72,9 +72,10 @@ What is in it:
 **This step is required, and it is the one that takes time.**
 
 Nothing is searchable until the index is built, and building it downloads the embedding model
-(~110 MB from Hugging Face) the first time. **Allow up to 3 minutes.** The server pre-warms the
-model in the background at startup, but a `search` issued in the first minute of a cold install
-may time out — run this first and let it finish.
+(~487 MB from Hugging Face) the first time. **Allow a few minutes** — under a minute on a fast
+connection, several on a slow one. The server pre-warms the model in the background at startup,
+but a `search` issued before the download finishes may time out — run this first and let it
+finish.
 
 In Claude Desktop:
 
@@ -215,8 +216,8 @@ note every time, so a blind retry would produce two.
 |---|---|
 | Extension installs, no tools appear | Fully quit and reopen Claude Desktop. Check the vault folder is set in the extension's settings. |
 | `no SQLite binding for the Node.js it was started with` | Your `node` is outside 22/24/25/26. The message names your version and the supported set. Install a supported Node and restart. |
-| Writes fail, reads work | `git` is not on `PATH`. Run `git --version`; on macOS `xcode-select --install`. |
-| First search hangs or times out | The model is still downloading (~110 MB, one time). Run the reindex in §3 and let it finish. |
+| `reindex` fails with `spawn git ENOENT`; nothing is searchable and every write fails | `git` is not on `PATH`, so the index was never built. Run `git --version`; on macOS `xcode-select --install`. Then reindex again. |
+| First search hangs or times out | The model is still downloading (~487 MB, one time). Run the reindex in §3 and let it finish. |
 | `search` returns nothing | The index has not been built — see §3. Search itself says so: *"the vault may be empty or unindexed (run reindex)"*. |
 | `unsubstituted config template` on startup | The vault folder setting is empty. Set it in the extension's settings and restart. |
 
