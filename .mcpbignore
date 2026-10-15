@@ -50,3 +50,7 @@ node_modules/better-sqlite3/build/
 .github/
 .claude/
 *.mcpb
+
+# The Agensi skill and its upload zip — not part of the server.
+/nexus-memory/
+/nexus-memory.zip

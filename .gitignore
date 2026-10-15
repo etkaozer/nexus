@@ -13,3 +13,6 @@ brain.db
 brain.db-*
 
 .DS_Store
+
+# Agensi upload artifact — rebuilt from nexus-memory/ with: zip -X -r nexus-memory.zip nexus-memory
+nexus-memory.zip
