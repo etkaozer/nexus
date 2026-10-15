@@ -167,6 +167,19 @@ Each search hit carries `similarity` (the raw cosine for the chunk shown, or `nu
 
 The **caller** chooses a note's `type` and `source`; the engine never infers them. Errors that need a human decision (a write-guard conflict, a duplicate uid) come back as clean, actionable tool errors — not stack traces.
 
+Every tool declares its behaviour to the host through MCP annotations, so a client can tell a query from a write without reading prose:
+
+| | `search` | `read` | `upsert` | `link` | `reindex` | `archive` |
+|---|---|---|---|---|---|---|
+| `readOnlyHint` | `true` | `true` | `false` | `false` | `false` | `false` |
+| `destructiveHint` | — | — | `false` | `false` | `false` | **`true`** |
+| `idempotentHint` | — | — | `false` | `true` | `true` | `true` |
+| `openWorldHint` | `false` | `false` | `false` | `false` | `false` | `false` |
+
+Three of these are load-bearing because the spec's *defaults* are wrong for a local memory server. `destructiveHint` defaults to **true**, so `upsert`/`link`/`reindex` state `false` explicitly or they advertise themselves as capable of destroying data. `openWorldHint` defaults to **true**, which would describe a purely local vault as an outbound network call. And `reindex` is a writer despite reading like maintenance — it mints uids and injects chunk anchors into your notes. `archive` is the one tool marked destructive: it soft-deletes, but it removes the note from every active view, and that is the effect worth warning a user about. `upsert` is the one writer that is *not* idempotent — without a `uid` it creates a new note every call.
+
+The dashes are deliberate: the MCP spec scopes `destructiveHint` and `idempotentHint` to `readOnlyHint == false`, so stating them on a read-only tool would assert nothing.
+
 ### The note model
 
 Every note carries this frontmatter (identity is `uid`, never the filename — so Obsidian renames can't break references):
@@ -214,13 +227,35 @@ Unchanged chunks are left untouched; running `reindex` twice does nothing the se
 
 ### Prerequisites
 
-- **Node ≥ 20** — check with `node --version`.
+- **Node ≥ 22** — check with `node --version`. (Node 20 reached end-of-life in April 2026, and `better-sqlite3` no longer publishes a prebuilt binary for it.)
 - **A C/C++ toolchain**, *only* if `npm install` can't use prebuilt binaries for the native modules (`better-sqlite3`, `onnxruntime-node`). Most platforms get prebuilds and need nothing extra; if a source build is triggered, install: macOS → `xcode-select --install`; Debian/Ubuntu → `sudo apt install build-essential python3`; Windows → Visual Studio's "Desktop development with C++" workload.
+- **`git` on your `PATH`** — check with `git --version`. Not optional: every mutation (`upsert`, `link`, `archive`) and the bootstrap pass of `reindex` commits to a git repo inside your vault, so without git those tools fail. macOS → `xcode-select --install`; Debian/Ubuntu → `sudo apt install git`; Windows → [git-scm.com](https://git-scm.com).
 - **~150 MB free disk** for the embedding model and index (fetched/built once, then reused).
 - **Claude Desktop** (or any MCP client) to use it interactively — optional if you only run the CLI.
 - **An Obsidian vault** — or any folder of Markdown files, or even an empty folder Nexus will create and manage for you.
 
-### 1 · Clone, install, build
+### Option A · Desktop Extension (`.mcpb`) — no terminal needed
+
+Claude Desktop installs Nexus as a bundle: double-click `nexus.mcpb`, or **Settings → Extensions →
+Install Extension…**, and pick your vault folder when prompted. Node and git still have to be
+present (above), but nothing needs to be cloned, installed, or built.
+
+The bundle is macOS/Apple Silicon only, and carries a SQLite binding for each of Node 22/24/25/26 —
+if you are on some other Node, the server says so by name at startup instead of failing obscurely.
+Building it yourself is one command:
+
+```bash
+npm run pack:mcpb        # build → fetch native bindings → preflight → nexus.mcpb
+```
+
+For the full install-and-exercise walkthrough — including a five-note sample vault that makes every
+tool testable on a fresh install — see **[REVIEWERS.md](REVIEWERS.md)**.
+
+### Option B · From source
+
+Use this for any other platform, any other MCP host, or to develop on Nexus.
+
+#### 1 · Clone, install, build
 
 ```bash
 git clone https://github.com/etkaozer/nexus.git nexus && cd nexus
@@ -230,15 +265,15 @@ npm run build    # compiles TypeScript → dist/
 
 `dist/` is git-ignored, so `npm run build` is required after every clone (and after pulling changes).
 
-### 2 · Run the tests (recommended)
+#### 2 · Run the tests (recommended)
 
 ```bash
-npm test         # 26 tests
+npm test         # 96 tests
 ```
 
-The integration tests exercise the **real** local embedding model, so the *first* `npm test` needs network access and a few minutes while `multilingual-e5-small` (~110 MB) downloads to `~/.cache/nexus/models`. Every run after that is offline and fast. All 26 should pass.
+The integration tests exercise the **real** local embedding model, so the *first* `npm test` needs network access and a few minutes while `multilingual-e5-small` (~110 MB) downloads to `~/.cache/nexus/models`. Every run after that is offline and takes ~20s. All 96 should pass.
 
-### 3 · Point Nexus at a vault and bootstrap it
+#### 3 · Point Nexus at a vault and bootstrap it
 
 A "vault" is just a directory of `.md` files. Bootstrapping does three one-time things to it: mints a stable `uid` in each note's frontmatter, injects invisible `<!-- cid -->` chunk anchors, and builds the search index.
 
@@ -257,7 +292,7 @@ What this does and where things go:
 - `reindex` is **idempotent** — safe to run any time; running it twice does nothing the second time.
 - Starting fresh? Point `NEXUS_VAULT` at an empty (or not-yet-existing) folder; Nexus creates it and manages notes there through the tools.
 
-### 4 · Register with Claude Desktop
+#### 4 · Register with Claude Desktop
 
 Claude Desktop launches the server for you over stdio. Add Nexus to its MCP config file:
 
@@ -280,7 +315,7 @@ Use an **absolute path to `node`** (find it with `which node` on macOS/Linux, `w
 
 Replace the three placeholder paths, then **fully quit and reopen** Claude Desktop (closing the window isn't enough). On startup Nexus pre-warms the model in the background, so your first search doesn't block on the download.
 
-### 5 · Verify it works
+#### 5 · Verify it works
 
 In Claude Desktop, open the tools (🔨) menu — you should see the six `nexus` tools. Ask something like *"search my notes for rate limiting"* and Claude will call the `search` tool. If the tools don't appear, see [Troubleshooting](#troubleshooting).
 
@@ -335,6 +370,39 @@ NEXUS_VAULT=<vault> node ./dist/main.js
 
 ---
 
+## Privacy Policy
+
+Nexus is local-first, and that is a technical fact about the code rather than a promise: there is
+no server, no account, no backend, and nothing to sign in to. The full policy is in
+**[PRIVACY.md](PRIVACY.md)**; the short version:
+
+- **Collection — none.** No telemetry, no analytics, no crash reporting, no usage metrics, no
+  update pings, no identifiers. The author receives nothing about you or your notes, in any form.
+- **Storage — your disk only.** Notes stay as plain Markdown in the vault folder you chose. The
+  search index lives at `~/.cache/nexus/brain.db` and is disposable — delete it and `reindex`
+  rebuilds it. The change history is git commits inside your vault; Nexus never adds a remote and
+  never pushes.
+- **Third-party sharing — none.** No note content is transmitted to anyone, ever.
+- **Retention — yours.** Delete a `.md` file, delete the index, delete `~/.cache/nexus/`. Nothing
+  survives elsewhere, because nothing was sent elsewhere.
+- **Embeddings run locally**, on your CPU, offline.
+
+**The one external network call.** On first use Nexus downloads
+[`Xenova/multilingual-e5-small`](https://huggingface.co/Xenova/multilingual-e5-small) (~110 MB)
+from `huggingface.co` and caches it under `~/.cache/nexus/models`. It is a plain fetch of public
+files — none of your notes, queries, or filenames are involved, and it happens before any of your
+data is read. After it completes Nexus never contacts the network again. You can pre-populate that
+cache from elsewhere if you would rather it never happened at all.
+
+**One honest caveat.** Nexus never transmits your notes — but *asking your assistant to read one
+does*. Tool arguments and results become part of the conversation, so they go to whoever runs the
+model, under their privacy policy. That is inherent to what an MCP server is for, and identical to
+pasting the note into the chat yourself. Notes you never ask about are never read.
+
+Questions: etkaozer0@gmail.com · [issues](https://github.com/etkaozer/nexus/issues).
+
+---
+
 ## Tech stack
 
 - **Language/runtime:** TypeScript (strict), Node LTS, ESM.
@@ -359,6 +427,7 @@ NEXUS_VAULT=<vault> node ./dist/main.js
 
 ### Future ideas
 
+- **Move the index to `node:sqlite`** — the highest-value item here, and it is a packaging fix, not a feature. `better-sqlite3` is not an N-API addon: each prebuilt binary is locked to one Node ABI, which is why the `.mcpb` bundle has to ship four of them and is pinned to a single platform. Node's built-in `node:sqlite` (with `loadExtension` for `sqlite-vec`) needs no prebuilds at all, which would make the bundle genuinely cross-platform and delete `scripts/fetch-prebuilds.mjs` and `src/index/native-binding.ts` outright. The cost is a rewrite of `SqliteIndexProvider` against a different API, and a Node ≥ 24 floor.
 - **Frontmatter-anchor alternative** — store chunk slugs in a frontmatter map instead of inline comments, for people who spend most of their time in Live Preview and want zero visible artifacts in the body.
 - **Block-level granularity** — anchor and retrieve at the paragraph/list-item level, not just the heading section.
 - **Non-MCP ingesters** — standalone importers that pour ChatGPT exports, repositories, or web clippings into the vault as `source`-tagged notes, so Nexus becomes the merge point for knowledge from many tools, not just the one talking to it live.

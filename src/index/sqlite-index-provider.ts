@@ -12,6 +12,7 @@
 
 import Database from "better-sqlite3";
 import * as sqliteVec from "sqlite-vec";
+import { nativeBindingOption } from "./native-binding.js";
 import type {
   IndexProvider,
   NoteIndexMeta,
@@ -87,7 +88,10 @@ export class SqliteIndexProvider implements IndexProvider {
 
   constructor(dbPath: string, embeddings: EmbeddingProvider) {
     this.embeddings = embeddings;
-    this.db = new Database(dbPath);
+    // nativeBindingOption() is empty in a dev checkout, so this is the plain `new Database(dbPath)`
+    // it has always been. Inside a packed MCPB it names the binding built for THIS Node's ABI —
+    // see native-binding.ts for why the bundled default cannot be trusted.
+    this.db = new Database(dbPath, nativeBindingOption());
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     sqliteVec.load(this.db);

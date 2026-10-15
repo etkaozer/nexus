@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -698,4 +699,153 @@ test("readAll returns every note in one pass and still rejects duplicate uids", 
   assert.ok(first);
   await writeFile(join(dirname(first.path), "clone.md"), await readFile(first.path, "utf8"));
   await assert.rejects(() => storage.readAll(), /Duplicate uid/);
+});
+
+// ── tool annotations: the behavioural contract a HOST reads ────────────────────────────────
+//
+// Annotations are not documentation — a host uses them to decide whether a call needs user
+// confirmation, whether it is safe to retry, and whether it may run without a network prompt.
+// Every hint has a SPEC DEFAULT, and the defaults are wrong for this server in the dangerous
+// direction: an omitted `destructiveHint` means "assume destructive", and an omitted
+// `openWorldHint` means "assume this talks to the open internet". So a missing annotation is not
+// a missing nicety, it is an incorrect claim — which is why these are asserted exhaustively with
+// deepEqual rather than field-by-field: an extra or drifted hint must fail too.
+//
+// Asserted against client.listTools() for the same reason as the guard tests: that is the only
+// surface that reflects what a host actually receives.
+
+/**
+ * The intended contract, written out once. `destructiveHint` / `idempotentHint` are deliberately
+ * ABSENT on the read-only tools — the spec scopes both to `readOnlyHint == false`, so stating them
+ * there would be noise asserting nothing.
+ */
+const EXPECTED_ANNOTATIONS: Record<string, Record<string, unknown>> = {
+  search: { title: "Search the second brain", readOnlyHint: true, openWorldHint: false },
+  read: { title: "Read a note", readOnlyHint: true, openWorldHint: false },
+  // Additive, never destructive (supersede archives — it never deletes). Not idempotent: the
+  // uid-less form mints a NEW note on every call.
+  upsert: {
+    title: "Create or update a note",
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: false,
+  },
+  // Idempotent by construction — addAuthoredLink() returns the body untouched if the wikilink
+  // is already there.
+  link: {
+    title: "Link two notes",
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  // A writer, not a query: reindex mints uids for uid-less Markdown and injects <!-- cid -->
+  // anchors, then commits. Hash-diff based, so re-running changes nothing.
+  reindex: {
+    title: "Reindex from Markdown",
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+  // The one destructive tool BY INTENT. It soft-deletes (the file is kept), but it removes the
+  // note from every active view, and that is the effect a host must be able to warn about.
+  archive: {
+    title: "Archive a note",
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: true,
+    openWorldHint: false,
+  },
+};
+
+const READ_ONLY_TOOLS = ["read", "search"];
+const WRITE_TOOLS = ["archive", "link", "reindex", "upsert"];
+
+for (const [name, expected] of Object.entries(EXPECTED_ANNOTATIONS)) {
+  test(`${name} exposes exactly its intended annotations over listTools()`, async (t) => {
+    const { client } = await setup(t);
+    const { tools } = await client.listTools();
+    const tool = tools.find((x) => x.name === name);
+    assert.ok(tool, `${name} is registered`);
+    assert.deepEqual(tool.annotations, expected);
+  });
+}
+
+test("read tools and write tools are cleanly separated by readOnlyHint", async (t) => {
+  // Derived from the delivered list rather than restated, so adding a seventh tool without a
+  // deliberate classification fails here instead of shipping as an unannotated writer.
+  const { client } = await setup(t);
+  const { tools } = await client.listTools();
+
+  const readOnly = tools.filter((x) => x.annotations?.readOnlyHint === true).map((x) => x.name).sort();
+  const writers = tools.filter((x) => x.annotations?.readOnlyHint !== true).map((x) => x.name).sort();
+
+  assert.deepEqual(readOnly, READ_ONLY_TOOLS, "only search and read claim to be read-only");
+  assert.deepEqual(writers, WRITE_TOOLS, "everything that touches the vault is declared a writer");
+});
+
+test("every write tool declares destructiveHint explicitly rather than inheriting it", async (t) => {
+  // The regression this pins: `destructiveHint` DEFAULTS TO TRUE. Omit it on upsert/link/reindex
+  // and the host is told three additive tools may destroy data — the exact miscategorisation that
+  // gets a connector rejected. Asserting the key is a boolean (not just falsy) is the point.
+  const { client } = await setup(t);
+  const { tools } = await client.listTools();
+
+  for (const name of WRITE_TOOLS) {
+    const annotations = tools.find((x) => x.name === name)?.annotations;
+    assert.ok(annotations, `${name} carries annotations`);
+    assert.equal(typeof annotations.destructiveHint, "boolean", `${name} states destructiveHint outright`);
+    assert.equal(typeof annotations.idempotentHint, "boolean", `${name} states whether a retry is safe`);
+  }
+});
+
+test("no tool claims an open world — the vault is local and closed", async (t) => {
+  // Also default-true, and also wrong: nothing here reaches an external entity. Left unstated, a
+  // host may treat every call as an outbound request.
+  const { client } = await setup(t);
+  const { tools } = await client.listTools();
+  assert.equal(tools.length, 6);
+  for (const tool of tools) {
+    assert.equal(tool.annotations?.openWorldHint, false, `${tool.name} declares a closed world`);
+  }
+});
+
+test("manifest.json advertises exactly the tools the server actually registers", async (t) => {
+  // The MCPB manifest lists the tool surface for the install screen and for review, but nothing
+  // connects that list to the code — rename a tool and the manifest keeps describing the old one,
+  // silently, until a reviewer notices the connector does not do what it claims. This is the only
+  // thing that couples them.
+  const { client } = await setup(t);
+  const { tools } = await client.listTools();
+
+  const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const manifest = JSON.parse(await readFile(join(root, "manifest.json"), "utf8")) as {
+    tools: Array<{ name: string; description?: string }>;
+  };
+
+  assert.deepEqual(
+    manifest.tools.map((x) => x.name).sort(),
+    tools.map((x) => x.name).sort(),
+    "the manifest's tool list and the live tool list are the same set",
+  );
+  for (const tool of manifest.tools) {
+    assert.ok(tool.description && tool.description.length > 0, `manifest describes ${tool.name}`);
+  }
+});
+
+test("every tool carries a human-readable title on both title surfaces", async (t) => {
+  // A host may read the top-level `title` (current spec) or `annotations.title` (how titles were
+  // carried before it existed). Populating one and not the other shows a raw tool name in the
+  // other kind of host, so both are asserted — and asserted to AGREE.
+  const { client } = await setup(t);
+  const { tools } = await client.listTools();
+
+  for (const tool of tools) {
+    const expected = EXPECTED_ANNOTATIONS[tool.name]?.title;
+    assert.equal(tool.title, expected, `${tool.name} has a top-level title`);
+    assert.equal(tool.annotations?.title, expected, `${tool.name} has the same title in annotations`);
+    assert.notEqual(tool.title, tool.name, `${tool.name}'s title is human-readable, not the raw name`);
+  }
 });

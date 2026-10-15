@@ -2,6 +2,12 @@ node_modules/
 dist/
 *.tsbuildinfo
 
+# MCPB build artifacts — the bundle itself, and the native bindings `npm run prebuilds`
+# downloads. Both are reproducible from the scripts; neither belongs in git.
+*.mcpb
+prebuilds/
+.prebuild-tmp/
+
 # Derived index — disposable, rebuildable from Markdown via `reindex`.
 brain.db
 brain.db-*

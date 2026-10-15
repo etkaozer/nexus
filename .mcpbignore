@@ -1,0 +1,52 @@
+# What NOT to put in the .mcpb bundle.
+#
+# `mcpb pack` zips the directory verbatim, node_modules included — so without this the bundle is
+# ~450MB, most of it code that can never execute on the platform we ship. Everything dropped below
+# is either unreachable at runtime or belongs to a platform this bundle does not target
+# (see compatibility.platforms in manifest.json).
+#
+# Measured effect: ~450MB → ~90MB unpacked.
+
+# ── build inputs, not runtime ──────────────────────────────────────────────────────────────
+# NOTE THE LEADING SLASHES. These patterns are gitignore syntax, so an unanchored `src/` matches
+# a directory named src at ANY depth — including node_modules/debug/src/, which is that package's
+# `main`. That produced a bundle that packed and validated cleanly and then died on startup with
+# ERR_MODULE_NOT_FOUND. Anchor anything that names a top-level directory.
+/src/
+/scripts/
+/.prebuild-tmp/
+/.github/
+/.claude/
+*.tsbuildinfo
+node_modules/typescript/
+node_modules/@types/
+
+# Compiled tests. They only run against tmp dirs, but there is no reason to ship them.
+dist/**/*.test.js
+dist/**/*.test.js.map
+dist/scripts/
+
+# ── the big one: the browser build of onnxruntime ──────────────────────────────────────────
+# A hard dependency of @huggingface/transformers, but transformers.node.mjs never imports it —
+# Node resolves the "node" export condition to onnxruntime-node. 130MB of WASM for nothing.
+node_modules/onnxruntime-web/
+
+# ── other platforms' native binaries ────────────────────────────────────────────────────────
+# onnxruntime-node ships every platform in one package; we target darwin only. 176MB of the 210MB.
+node_modules/onnxruntime-node/bin/napi-v6/linux/
+node_modules/onnxruntime-node/bin/napi-v6/win32/
+
+# The bundled SQLite C sources — used only by a from-source build, which cannot happen inside an
+# installed bundle. The binding itself ships under prebuilds/ (see .mcpbignore note below).
+node_modules/better-sqlite3/deps/
+node_modules/better-sqlite3/src/
+
+# The packer's own ABI-specific binary. Shipping it is actively harmful: it is the thing that
+# would load if the prebuilds/ lookup ever fell through, and it only works on the machine that
+# packed the bundle. prebuilds/ is what gets used — see src/index/native-binding.ts.
+node_modules/better-sqlite3/build/
+
+# ── repo furniture ─────────────────────────────────────────────────────────────────────────
+.github/
+.claude/
+*.mcpb

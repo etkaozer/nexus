@@ -1,12 +1,12 @@
 {
   "name": "nexus-mcp",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "Local stdio MCP server bridging Claude Desktop and an Obsidian vault — a second brain. Markdown is the source of truth; the index is a disposable projection.",
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
   },
   "bin": {
     "nexus-mcp": "./dist/main.js"
@@ -17,9 +17,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "dev": "tsc -p tsconfig.json --watch",
     "start": "node ./dist/main.js",
-    "test": "npm run build && node --test \"dist/**/*.test.js\""
+    "test": "npm run build && node --test \"dist/**/*.test.js\"",
+    "prebuilds": "node ./scripts/fetch-prebuilds.mjs",
+    "preflight": "node ./scripts/preflight-mcpb.mjs",
+    "pack:mcpb": "npm run build && npm run prebuilds && npm run preflight && mcpb pack . nexus.mcpb"
   },
   "devDependencies": {
+    "@anthropic-ai/mcpb": "^2.1.2",
     "@types/better-sqlite3": "^7.6.13",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^22.20.0",

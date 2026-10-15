@@ -20,6 +20,7 @@ import { MarkdownChunkManager } from "./core/markdown-chunk-manager.js";
 import { NexusEngine } from "./engine/nexus-engine.js";
 import { createServer } from "./mcp/server.js";
 import { buildInstructions } from "./mcp/instructions.js";
+import { resolveVaultPath } from "./config.js";
 import type { Engine } from "./engine/engine.js";
 import type { IndexProvider } from "./interfaces/index-provider.js";
 
@@ -125,21 +126,11 @@ async function main(): Promise<void> {
   const [, , cmd, ...rest] = process.argv;
 
   if (cmd === "reindex") {
-    const vaultArg = process.env["NEXUS_VAULT"] ?? rest[0];
-    if (!vaultArg) {
-      console.error("Nexus reindex: no vault path. Usage: nexus-mcp reindex <vault> (or set NEXUS_VAULT).");
-      process.exit(1);
-    }
-    await runReindex(vaultArg);
+    await runReindex(resolveVaultPath(process.env, rest[0]));
     return;
   }
 
-  const vaultArg = process.env["NEXUS_VAULT"] ?? cmd;
-  if (!vaultArg) {
-    console.error("Nexus: no vault path. Usage: nexus-mcp <vault> (or set NEXUS_VAULT).");
-    process.exit(1);
-  }
-  await runServer(vaultArg);
+  await runServer(resolveVaultPath(process.env, cmd));
 }
 
 function errMsg(e: unknown): string {

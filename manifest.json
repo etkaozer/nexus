@@ -1,0 +1,87 @@
+{
+  "$schema": "https://raw.githubusercontent.com/anthropics/mcpb/main/schemas/mcpb-manifest-v0.2.schema.json",
+  "manifest_version": "0.2",
+  "name": "nexus",
+  "display_name": "Nexus",
+  "version": "0.1.0",
+  "description": "A local-first second brain: search, read, and curate a folder of Markdown notes that remembers your thinking across chats.",
+  "long_description": "Nexus gives Claude a durable memory that lives in your own Markdown files instead of inside a single conversation. It indexes a folder of notes — an Obsidian vault, or any directory of .md files — and exposes six tools for finding and curating them: hybrid semantic + keyword search, full-note reads with backlinks and supersession chains, and non-destructive writes.\n\nEverything is local. The notes stay on your disk as plain Markdown, the search index is a disposable projection you can delete and rebuild at any time, and embeddings are computed on your own machine by a model that runs offline after a one-time download. Nothing you write is transmitted anywhere.\n\nNexus never hard-deletes. Archiving marks a note and keeps the file; replacing a note archives the old one and cross-links both, so the path your thinking took stays recoverable. Every change is a git commit in your vault.",
+  "author": {
+    "name": "etkaozer",
+    "email": "etkaozer0@gmail.com",
+    "url": "https://github.com/etkaozer"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/etkaozer/nexus"
+  },
+  "homepage": "https://github.com/etkaozer/nexus",
+  "documentation": "https://github.com/etkaozer/nexus#readme",
+  "support": "https://github.com/etkaozer/nexus/issues",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "notes",
+    "markdown",
+    "obsidian",
+    "second-brain",
+    "knowledge-base",
+    "local-first",
+    "search"
+  ],
+  "privacy_policies": [
+    "https://example.com/REPLACE-ME/nexus-privacy-policy"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/main.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/main.js"],
+      "env": {
+        "NEXUS_VAULT": "${user_config.vault_path}"
+      }
+    }
+  },
+  "tools_generated": false,
+  "tools": [
+    {
+      "name": "search",
+      "description": "Find notes by meaning or exact term. Fuses semantic vector search with keyword search, so both conceptual questions and rare identifiers hit. Read-only."
+    },
+    {
+      "name": "read",
+      "description": "Read a full note by uid: frontmatter, body, backlinks, semantically related notes, and resolved supersession pointers. Read-only."
+    },
+    {
+      "name": "upsert",
+      "description": "Create a new note or overwrite an existing one. Guarded against clobbering edits made outside Nexus. Can supersede an older note, which archives and cross-links it rather than deleting it."
+    },
+    {
+      "name": "archive",
+      "description": "Mark a note as archived, removing it from active views. The file is kept on disk and the change is a git commit, so it stays recoverable."
+    },
+    {
+      "name": "link",
+      "description": "Add an authored [[wikilink]] from one note to another, under a Links heading. Idempotent."
+    },
+    {
+      "name": "reindex",
+      "description": "Rebuild the search index from the Markdown source of truth. Run after editing notes outside Nexus. Assigns identifiers to new notes on first run."
+    }
+  ],
+  "user_config": {
+    "vault_path": {
+      "type": "directory",
+      "title": "Vault folder",
+      "description": "The folder holding your Markdown notes — an Obsidian vault, any directory of .md files, or a new empty folder for Nexus to manage. These files are the source of truth and never leave your machine. Back up an existing vault first: the initial reindex adds a uid and invisible chunk anchors to every note.",
+      "required": true
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin"],
+    "runtimes": {
+      "node": ">=22.0.0"
+    }
+  }
+}
